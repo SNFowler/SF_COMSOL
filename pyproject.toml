@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adjoint-sim-sf"
+version = "0.1"
+description = "Adjoint simulation tools"
+requires-python = ">=3.8"
+
+[tool.setuptools]
+packages = ["adjoint_sim_sf"]
