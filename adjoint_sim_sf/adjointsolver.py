@@ -29,7 +29,7 @@ class DesignBuilder():
     """
     Interface for producing Qiskit design from an np array of parameters. 
     """
-    def get_design(self, design_parameters):
+    def get_design(self, design_parameters : np.ndarray):
         pass
 
 class SymmetricTransmonBuilder(DesignBuilder):
@@ -41,7 +41,7 @@ class SymmetricTransmonBuilder(DesignBuilder):
     def __init__(self):
         pass
 
-    def get_design(self, width):
+    def get_design(self, width: np.ndarray):
         """
         Outputs the Qiskit design given a single width parameter.
 
@@ -64,7 +64,7 @@ class SymmetricTransmonBuilder(DesignBuilder):
                                                                 finger_width='0.4um', t_pad_size='0.385um',
                                                                 squid_width='5.4um', prong_width='0.9um'));
 
-        padCoordNums = [width, 0.02, 0.17926553, 0.25, 0.25]
+        padCoordNums = [width[0], 0.02, 0.17926553, 0.25, 0.25]
         padCoords = [[-0.05, 0.012], [0.05, 0.012], [padCoordNums[0], padCoordNums[1]], [padCoordNums[2], padCoordNums[3]], [0, padCoordNums[4]], [-padCoordNums[2], padCoordNums[3]], [-padCoordNums[0], padCoordNums[1]]]
         padCoords2 = [[x[0],-x[1]] for x in padCoords][::-1]
 
@@ -94,18 +94,23 @@ class AdjointOptimiser:
     Encapsulates the adjoint optimisation process.
 
     @TODO: The forward and backward solvers don't necessarily need to be explicitly computing the full array of E field values if they're already contained in the sim_sParams object. 
+    @TODO: Decide on storing 2 entire COMSOL_Simulation_RFsParameters objects or just the fields.
+    @TODO: Ensure old COMSOL simulations aren't kept open when running.
     """
     
     def __init__(self, initial_parameters: np.array, lr: float, builder: DesignBuilder):
         self.builder = builder
         self.design = None
-        self.current_parameters = self.initialise_parameters()
+        self.current_params = self.initial_parameters      # : np.ndarray
         self.lr = lr # learning rate
 
         self.fwd_field_sParams = None
         self.adjoint_field_sParams = None
+        self.dA_dparams
+
         self.grad = None
 
+        # Note that currently the fwd_field_data contains coordinates, E, B, D and H field while the adjoint_field_data contains only coordinates and E.
         self.fwd_field_data = None
         self.adjoint_field_data = None
 
@@ -113,19 +118,19 @@ class AdjointOptimiser:
         self.adjoint_source_location =  [0,0, 100e-6]
 
 
-    def fwd_calculation(self):
+    def _fwd_calculation(self):
         assert self.design
 
         self.design.rebuild()
 
         #Instantiate a COMSOL model
-        cmsl = COMSOL_Model('leModel')
+        cmsl = COMSOL_Model('FwdModel')
 
         #Create simulations to setup - in this case capacitance matrix and RF s-parameter
         sim_sParams = COMSOL_Simulation_RFsParameters(cmsl, adaptive='None')
 
         #(A) - Initialise model from Qiskit-Metal design object: design
-        cmsl.initialize_model(design, [sim_sParams], bottom_grounded=True)
+        cmsl.initialize_model(self.design, [sim_sParams], bottom_grounded=True)
 
         cmsl.add_metallic(1, threshold=1e-12, fuse_threshold=1e-10)
         cmsl.add_ground_plane()
@@ -152,29 +157,29 @@ class AdjointOptimiser:
         # cmsl.plot()
         sim_sParams.run()
         
-        self.fwd_field_data = sim_sParams.eval_fields_over_mesh()
+        return sim_sParams.eval_fields_over_mesh
 
 
-    def adjoint_calculation(self):
+    def _adjoint_calculation(self):
         assert self.design
         assert self.fwd_field_data
 
         self.design.rebuild()
 
         #Instantiate a COMSOL model
-        cmsl = COMSOL_Model('leModel')
+        cmsl = COMSOL_Model('AdjModel')
 
         #Create simulations to setup - in this case capacitance matrix and RF s-parameter
-        sim_sParams = COMSOL_Simulation_RFsParameters(cmsl, adaptive='None')
+        adj_sParams = COMSOL_Simulation_RFsParameters(cmsl, adaptive='None')
 
         #(A) - Initialise model from Qiskit-Metal design object: design
-        cmsl.initialize_model(design, [sim_sParams], bottom_grounded=True)
+        cmsl.initialize_model(self.design, [adj_sParams], bottom_grounded=True)
 
         cmsl.add_metallic(1, threshold=1e-12, fuse_threshold=1e-10)
         cmsl.add_ground_plane()
         cmsl.fuse_all_metals()
 
-        sim_sParams.create_port_JosephsonJunction('junction', L_J=4.3e-9, C_J=10e-15, R_J=10e3)
+        adj_sParams.create_port_JosephsonJunction('junction', L_J=4.3e-9, C_J=10e-15, R_J=10e3)
 
         # sim_sParams.add_surface_current_source_region("dielectric", 0.5)
         # sim_sParams.add_surface_current_source_region("metals", 10e-6, 2)
@@ -182,27 +187,37 @@ class AdjointOptimiser:
         # edp_pts = ShapelyEx.get_points_uniform_in_polygon(poly1, 0.01,0.01)
         # for cur_pt in edp_pts:
         #     x, y = cur_pt[0]*0.001, cur_pt[1]*0.001 #Converting from mm to m
-        #     sim_sParams.add_electric_point_dipole([x,y, 1e-6], 1, [0,0,1])
+        #     adj_sParams.add_electric_point_dipole([x,y, 1e-6], 1, [0,0,1])
 
-        sim_sParams.add_electric_point_dipole(self.adjoint_source_location, 1, [0,1,0])
-        # sim_sParams.add_electric_point_dipole([0,0,0], 0, [0,1,0])
+        adj_sParams.add_electric_point_dipole(self.adjoint_source_location, 1, [0,1,0])
+        # adj_sParams.add_electric_point_dipole([0,0,0], 0, [0,1,0])
 
         cmsl.fine_mesh_around_comp_boundaries(['pad1', 'pad2'], minElementSize=10e-6, maxElementSize=50e-6)
 
         cmsl.build_geom_mater_elec_mesh(skip_meshing=True, mesh_structure='Fine')
 
-        sim_sParams.set_freq_values([8.0333e9])
+        adj_sParams.set_freq_values([8.0333e9])
         # cmsl.plot()
-        sim_sParams.run()
-        #sim_sParams.eval_field_at_pts('E', np.array([[0,0,0]]))
+        adj_sParams.run()
 
-        # get field at points
+        # Evaluate adjoint field at the forward mesh
+        adjoint_field_data = {
+            "coords"   :    self.fwd_field_data["coords"], # shallow copy
+            "E"        :    adj_sParams.eval_field_at_pts('E', self.fwd_field_data['coords'])
+        }
 
-    def evaluate_design_derivative(self):
-        #computing A_p, and evaluating it at the same mesh points as the forward field
+        adjoint_field_values = adj_sParams.eval_field_at_pts('E', self.fwd_field_data['coords'])
+        
+
+
+    def _evaluate_ds(self):
+        #lazy computation
         pass
 
-    def optimisation_process(self):
+    def _compute_gradient(self):
+        pass             #A_p
+
+    def optimisation(self):
         # initialise optimizer
         # intialize training data log
         # training loop:
@@ -221,12 +236,6 @@ class AdjointOptimiser:
 
         pass
 
-    
-
-    def figure_of_merit(self):
-        """
-        @TODO: Abstract this method away so that we can use different figures of merit.
-        """
 
 
 
