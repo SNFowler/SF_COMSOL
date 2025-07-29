@@ -1,4 +1,5 @@
-from adjoint_sim_sf.adjointsolver import DesignBuilder, SymmetricTransmonBuilder, AdjointOptimiser
+from adjoint_sim_sf.DesignBuilder import DesignBuilder, SymmetricTransmonBuilder
+from adjoint_sim_sf.DesignBuilder import AdjointOptimiser
 import numpy as np
 
 def test_symmetrictransmonbuilder():

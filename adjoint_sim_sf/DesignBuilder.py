@@ -6,6 +6,7 @@ import qiskit_metal as metal
 
 # To create plots after geting solution data.
 import matplotlib.pyplot as plt
+import numpy as np
 
 # Packages for the simple design
 from SQDMetal.Comps.Junctions import JunctionDolan

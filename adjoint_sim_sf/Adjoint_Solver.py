@@ -23,6 +23,8 @@ from SQDMetal.COMSOL.SimRFsParameter import COMSOL_Simulation_RFsParameters
 
 from SQDMetal.Utilities.ShapelyEx import ShapelyEx
 from typing import Iterable
+
+import adjoint_sim_sf.DesignBuilder
     
 class AdjointOptimiser:
     """
