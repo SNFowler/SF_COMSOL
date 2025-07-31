@@ -1,3 +1,4 @@
 AdjointOptimisation/*
 adjoint_sim_sf.egg-info/*
 .pytest_cache/*
+env_check/*
