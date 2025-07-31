@@ -3,6 +3,8 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 # Import useful packages
 import qiskit_metal as metal
+from qiskit_metal import designs, draw
+from qiskit_metal import MetalGUI, Dict, open_docs
 
 # To create plots after geting solution data.
 import matplotlib.pyplot as plt
@@ -19,13 +21,17 @@ from SQDMetal.COMSOL.SimCapacitance import COMSOL_Simulation_CapMats
 from SQDMetal.COMSOL.SimRFsParameter import COMSOL_Simulation_RFsParameters
 
 from SQDMetal.Utilities.ShapelyEx import ShapelyEx
+from abc import ABC, abstractmethod
+
+from adjoint_sim_sf.PolygonConstructor import PolygonConstructor
 
 
-class DesignBuilder():
+class DesignBuilder(ABC):
     """
     Interface for producing Qiskit design from an np array of parameters. 
     """
-    def get_design(self, design_parameters : np.ndarray):
+    @abstractmethod
+    def get_design(self, shapely_design):
         pass
 
 class SymmetricTransmonBuilder(DesignBuilder):
@@ -37,12 +43,15 @@ class SymmetricTransmonBuilder(DesignBuilder):
     def __init__(self):
         pass
 
-    def get_design(self, width: np.ndarray):
+    def get_design(self, shapely_components):
         """
         Outputs the Qiskit design given a single width parameter.
 
         This method is extremely impure.
+
+        @TODO: Refactor the shapely component to be computed seperately?
         """
+        assert len(shapely_components == 2)
         
         # Procedure from SweepPoly2.ipynb
         # Set up chip design as planar, multiplanar also available
@@ -60,12 +69,7 @@ class SymmetricTransmonBuilder(DesignBuilder):
                                                                 finger_width='0.4um', t_pad_size='0.385um',
                                                                 squid_width='5.4um', prong_width='0.9um'));
 
-        padCoordNums = [width[0], 0.02, 0.17926553, 0.25, 0.25]
-        padCoords = [[-0.05, 0.012], [0.05, 0.012], [padCoordNums[0], padCoordNums[1]], [padCoordNums[2], padCoordNums[3]], [0, padCoordNums[4]], [-padCoordNums[2], padCoordNums[3]], [-padCoordNums[0], padCoordNums[1]]]
-        padCoords2 = [[x[0],-x[1]] for x in padCoords][::-1]
-
-        poly1 = shapely.Polygon(padCoords).buffer(-0.04, join_style=1, quad_segs=4).buffer(0.04, join_style=1, quad_segs=4)
-        poly2 = shapely.Polygon(padCoords2).buffer(-0.04, join_style=1, quad_segs=4).buffer(0.04, join_style=1, quad_segs=4)
+        poly1, poly2 = shapely_components
 
         PolyShapely(design, 'pad1', options=dict(strShapely=poly1.__str__()))
         PolyShapely(design, 'pad2', options=dict(strShapely=poly2.__str__()))
