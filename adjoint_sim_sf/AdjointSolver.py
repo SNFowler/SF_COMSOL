@@ -47,25 +47,22 @@ class AdjointOptimiser:
         self.adjoint_field_sParams = None
         
         self.current_Ap = None                      # Partial derivative of the design with respect to the parameters
-        self.param_pertubation = 1e-5
+        self.param_perturbation = 1e-5
 
         self.grad = None
 
-        # Note that currently the fwd_field_data contains coordinates, E, B, D and H field while the adjoint_field_data contains only coordinates and E.
-        self.fwd_field_data = None
-        self.adjoint_field_data = None
 
-        self.fwd_source_location =      [-25e-3, 2e-3, 100e-6]
-        self.adjoint_source_location =  [0,0, 100e-6]
-
-
-    def _fwd_calculation(self):
+        self.freq_value                 =  8.0333e9
+        self.fwd_source_location        =  [-25e-3, 2e-3, 100e-6]
+        self.adjoint_source_location    =  [0,0, 100e-6]
+    
+    def _run_comsol_sim(self, model_name: str, is_adjoint: bool = False):
         assert self.design
 
         self.design.rebuild()
 
         #Instantiate a COMSOL model
-        cmsl = COMSOL_Model('FwdModel')
+        cmsl = COMSOL_Model(model_name)
 
         #Create simulations to setup - in this case capacitance matrix and RF s-parameter
         sim_sParams = COMSOL_Simulation_RFsParameters(cmsl, adaptive='None')
@@ -86,76 +83,47 @@ class AdjointOptimiser:
         # for cur_pt in edp_pts:
         #     x, y = cur_pt[0]*0.001, cur_pt[1]*0.001 #Converting from mm to m
         #     sim_sParams.add_electric_point_dipole([x,y, 1e-6], 1, [0,0,1])
-
-        sim_sParams.add_electric_point_dipole(self.fwd_source_location, 1, [0,1,0])
-        # sim_sParams.add_electric_point_dipole([0,0,0], 0, [0,1,0])
+        if is_adjoint:
+            sim_sParams.add_electric_point_dipole(self.adjoint_source_location, 1, [0,1,0])
+        else:
+            sim_sParams.add_electric_point_dipole(self.fwd_source_location, 1, [0,1,0])
 
         cmsl.fine_mesh_around_comp_boundaries(['pad1', 'pad2'], minElementSize=10e-6, maxElementSize=50e-6)
 
         cmsl.build_geom_mater_elec_mesh(skip_meshing=True, mesh_structure='Fine')
 
-        sim_sParams.set_freq_values([8.0333e9])
+        sim_sParams.set_freq_values([self.freq_value])
         # cmsl.plot()
         sim_sParams.run()
-        
-        return sim_sParams.eval_fields_over_mesh
 
+        return sim_sParams
+
+    def _fwd_calculation(self):
+        """
+        Returns raw mesh field data.
+        """
+        self.fwd_field_sParams = self._run_comsol_sim('FwdModel', is_adjoint=False)
 
     def _adjoint_calculation(self):
-        assert self.design
-        assert self.fwd_field_data
-
-        self.design.rebuild()
-
-        #Instantiate a COMSOL model
-        cmsl = COMSOL_Model('AdjModel')
-
-        #Create simulations to setup - in this case capacitance matrix and RF s-parameter
-        adj_sParams = COMSOL_Simulation_RFsParameters(cmsl, adaptive='None')
-
-        #(A) - Initialise model from Qiskit-Metal design object: design
-        cmsl.initialize_model(self.design, [adj_sParams], bottom_grounded=True)
-
-        cmsl.add_metallic(1, threshold=1e-12, fuse_threshold=1e-10)
-        cmsl.add_ground_plane()
-        cmsl.fuse_all_metals()
-
-        adj_sParams.create_port_JosephsonJunction('junction', L_J=4.3e-9, C_J=10e-15, R_J=10e3)
-
-        # sim_sParams.add_surface_current_source_region("dielectric", 0.5)
-        # sim_sParams.add_surface_current_source_region("metals", 10e-6, 2)
-
-        # edp_pts = ShapelyEx.get_points_uniform_in_polygon(poly1, 0.01,0.01)
-        # for cur_pt in edp_pts:
-        #     x, y = cur_pt[0]*0.001, cur_pt[1]*0.001 #Converting from mm to m
-        #     adj_sParams.add_electric_point_dipole([x,y, 1e-6], 1, [0,0,1])
-
-        adj_sParams.add_electric_point_dipole(self.adjoint_source_location, 1, [0,1,0])
-        # adj_sParams.add_electric_point_dipole([0,0,0], 0, [0,1,0])
-
-        cmsl.fine_mesh_around_comp_boundaries(['pad1', 'pad2'], minElementSize=10e-6, maxElementSize=50e-6)
-
-        cmsl.build_geom_mater_elec_mesh(skip_meshing=True, mesh_structure='Fine')
-
-        adj_sParams.set_freq_values([8.0333e9])
-        # cmsl.plot()
-        adj_sParams.run()
-
-        # Evaluate adjoint field at the forward mesh
-        adjoint_field_data = {
-            "coords"   :    self.fwd_field_data["coords"], # shallow copy
-            "E"        :    adj_sParams.eval_field_at_pts('E', self.fwd_field_data['coords'])
-        }
-
-        adjoint_field_values = adj_sParams.eval_field_at_pts('E', self.fwd_field_data['coords'])
-        
-
+        """
+        Returns the E field only, evaluated at the forward mesh coordinates.
+        """
+        self.adjoint_field_sParams = self._run_comsol_sim('AdjModel', is_adjoint=True)
 
     def _evaluate_ds(self):
         #lazy computation
         pass
 
     def _compute_gradient(self):
+        # Evaluate adjoint field at the forward mesh
+        assert self.fwd_field_data
+
+        # Evaluate the fwd and ajoint field at the same points
+        adjoint_field_data = {
+            "coords"   :    self.fwd_field_data["coords"], # shallow copy
+            "E"        :    self.adjoint_field_sParams.eval_field_at_pts('E', self.fwd_field_data['coords'])
+        }
+
         pass             
 
     def _compute_Ap(self) -> list:
@@ -165,15 +133,18 @@ class AdjointOptimiser:
 
         for i in range(len(self.current_params)):
             perturbed_params = np.copy(self.current_params)
-            perturbed_params[i] += self.param_pertubation
+            perturbed_params[i] += self.param_perturbation
             perturbed_shape = self.shapely_constructor.make_polygons(perturbed_params)
 
             intersection = shapely.intersection(shapely.unary_union(base_shape), shapely.unary_union(perturbed_shape))
             intersections.append(intersection)
 
         return intersections
+
+    def _compute_Ap_lazy(self):
+        # delete this
     
-    def _get_shape_velocity(poly_base: MultiPolygon, poly_pert: MultiPolygon, delta_p: float, n_pts=500):
+    def _get_shape_velocity(self, poly_base: MultiPolygon, poly_pert: MultiPolygon, delta_p: float, n_pts=500):
         """
         Compute normal shape velocity at points along the boundary of the base shape.
         

@@ -23,3 +23,7 @@ def test_compute_Ap_returns_shapely_objects(optimiser):
     assert len(result) == len(optimiser.current_params)
     for item in result:
         assert isinstance(item, (BaseGeometry, Polygon))  # shapely geometry
+
+def test_fwd_sim():
+
+def test_rev_sim():
