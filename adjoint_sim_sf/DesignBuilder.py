@@ -51,7 +51,7 @@ class SymmetricTransmonBuilder(DesignBuilder):
 
         @TODO: Refactor the shapely component to be computed seperately?
         """
-        assert len(shapely_components == 2)
+        assert len(shapely_components) == 2
         
         # Procedure from SweepPoly2.ipynb
         # Set up chip design as planar, multiplanar also available

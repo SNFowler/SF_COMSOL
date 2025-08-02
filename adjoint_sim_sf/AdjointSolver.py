@@ -14,6 +14,7 @@ import numpy as np
 # Packages for the simple design
 from SQDMetal.Comps.Junctions import JunctionDolan
 import shapely
+from shapely import difference
 from shapely.geometry import MultiPolygon, LineString, Point
 from SQDMetal.Comps.Polygons import PolyShapely, PolyRectangle
 from SQDMetal.Comps.Joints import Joint
@@ -37,6 +38,9 @@ class AdjointOptimiser:
     """
     
     def __init__(self, initial_parameters: np.array, lr: float, qiskit_builder: DesignBuilder, shapely_constructor: PolygonConstructor):
+        if COMSOL_Model._engine is None:
+            raise RuntimeError("COMSOL engine not initialized. Call COMSOL_Model.init_engine() before running simulations.")
+            
         self.qiskit_builder = qiskit_builder
         self.shapely_constructor = shapely_constructor
         self.design = None
@@ -45,6 +49,8 @@ class AdjointOptimiser:
 
         self.fwd_field_sParams = None
         self.adjoint_field_sParams = None
+        self.fwd_E_data = None
+        self.adjoint_E_data = None
         
         self.current_Ap = None                      # Partial derivative of the design with respect to the parameters
         self.param_perturbation = 1e-5
@@ -97,6 +103,12 @@ class AdjointOptimiser:
         sim_sParams.run()
 
         return sim_sParams
+    
+    def _update_qiskit_design(self):
+        shapely_components = self.shapely_constructor.make_polygons(self.current_params)
+        print(shapely_components)
+        print(len(shapely_components))
+        self.design = self.qiskit_builder.get_design(shapely_components)
 
     def _fwd_calculation(self):
         """
@@ -124,31 +136,85 @@ class AdjointOptimiser:
             "E"        :    self.adjoint_field_sParams.eval_field_at_pts('E', self.fwd_field_data['coords'])
         }
 
-        pass             
+        
+        raw_field_at_JJ = self.fwd_field_sParams.eval_field_at_pts('E', np.array([[0,0,0]]))  # Evaluate E at junction
+
+        # Compute adjoint source strength based on forward field
+        adjoint_strength = 2 * np.real(raw_field_at_JJ[0,1]) / (2 * np.pi * self.freq_value * 1.256637e-6)
+        
+        # Replace the adjoint dipole with correct amplitude
+        self.adjoint_source_location = [0,0,1e-6]  # Standard adjoint location
+        self.adjoint_field_sParams = self._run_comsol_sim('AdjModel', is_adjoint=True)
+        
+        # Evaluate adjoint field at the forward field mesh points
+        adjoint_field_data = {
+            "coords": self.fwd_field_data["coords"],  # shallow copy
+            "E": self.adjoint_field_sParams.eval_field_at_pts('E', self.fwd_field_data["coords"])
+        }
+
+        grad = []
+
+        # Calculate gradient component for each parameter
+        for i in range(len(self.current_params)):
+            base_shape = self.shapely_constructor.make_polygons(self.current_params)
+
+            perturbed_params = np.copy(self.current_params)
+            perturbed_params[i] += self.param_perturbation
+            perturbed_shape = self.shapely_constructor.make_polygons(perturbed_params)
+
+            poly_base = shapely.unary_union(base_shape)
+            poly_pert = shapely.unary_union(perturbed_shape)
+
+            poly_grad = shapely.difference(poly_pert, poly_base)
+
+            def calc_grad(point, poly_grad):
+                point = np.real(point)
+                dist = np.sqrt(shapely.distance(shapely.Point([point[0],point[1]]), poly_grad)**2 + point[2]**2)
+                return np.exp(-0.5*(dist/0.002)**2)
+
+            # Compute weighted field product
+            Ap_x = self.fwd_field_data['E'].copy()
+            for j, mesh_coord in enumerate(self.fwd_field_data['coords']):
+                Ap_x[j] *= calc_grad(mesh_coord, poly_grad)
+
+            v_Ap_x = np.dot(adjoint_field_data['E'].flatten(), Ap_x.flatten())
+            grad.append(v_Ap_x)
+
+            self.grad = np.array(grad)
+
+            pass   
+
+    def _extract_E_fields(self):
+        """
+        Evaluates and stores E fields from forward and adjoint simulations over the same mesh coordinates.
+        """
+        assert self.fwd_field_sParams is not None, "Forward simulation must be run first."
+        self.fwd_field_data = self.fwd_field_sParams.eval_fields_over_mesh()
+
+        assert self.adjoint_field_sParams is not None, "Adjoint simulation must be run before extracting adjoint E field."
+        self.adjoint_E_data = {
+            "coords": self.fwd_field_data["coords"],
+            "E": self.adjoint_field_sParams.eval_field_at_pts('E', self.fwd_field_data["coords"])
+        }        
 
     def _compute_Ap(self) -> list:
         
         base_shape = self.shapely_constructor.make_polygons(self.current_params)
-        intersections = []
+        differences = []
 
         for i in range(len(self.current_params)):
             perturbed_params = np.copy(self.current_params)
             perturbed_params[i] += self.param_perturbation
             perturbed_shape = self.shapely_constructor.make_polygons(perturbed_params)
 
-            intersection = shapely.intersection(shapely.unary_union(base_shape), shapely.unary_union(perturbed_shape))
-            intersections.append(intersection)
+            difference = shapely.difference(shapely.unary_union(base_shape), shapely.unary_union(perturbed_shape))
+            differences.append(difference)
 
-        return intersections
-
-    def _compute_Ap_lazy(self):
-        # delete this
+        return differences
     
     def _get_shape_velocity(self, poly_base: MultiPolygon, poly_pert: MultiPolygon, delta_p: float, n_pts=500):
         """
         Compute normal shape velocity at points along the boundary of the base shape.
-        
-        Returns a list of tuples (point, velocity_vector).
         """
         boundary_base = poly_base.boundary
         boundary_pert = poly_pert.boundary
