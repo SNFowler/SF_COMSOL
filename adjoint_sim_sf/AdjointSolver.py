@@ -266,10 +266,12 @@ class AdjointOptimiser:
         gradients = []
 
         for val in param_vals:
+            print(f"\nComputing gradient for {val}")
             self.current_params = np.array([val])
             self._update_qiskit_design()
 
             # --- Forward simulation
+            print("fwd")
             self.fwd_field_sParams = self._run_comsol_sim("FwdModel", is_adjoint=False)
             self.fwd_field_data = self.fwd_field_sParams.eval_fields_over_mesh()
             raw_E_at_JJ = self.fwd_field_sParams.eval_field_at_pts('E', np.array([[0,0,0]]))
@@ -287,15 +289,18 @@ class AdjointOptimiser:
             poly_grad = shapely.difference(poly_pert, poly_base)
 
             # --- Adjoint simulation
+            print("adj")
             self.adjoint_field_sParams = self._run_comsol_sim("AdjModel", is_adjoint=True)
             adjoint_E = self.adjoint_field_sParams.eval_field_at_pts('E', self.fwd_field_data["coords"])
 
             # --- Weighted inner product (Ap_x)
+            print("Weighting inner product")
             def calc_grad(point, poly_grad):
                 point = np.real(point)
                 dist = np.sqrt(shapely.distance(shapely.Point([point[0],point[1]]), poly_grad)**2 + point[2]**2)
                 return np.exp(-0.5*(dist/0.002)**2)
 
+            print("computing gradient")
             Ap_x = self.fwd_field_data['E'].copy()
             for j, mesh_coord in enumerate(self.fwd_field_data['coords']):
                 Ap_x[j] *= calc_grad(mesh_coord, poly_grad)

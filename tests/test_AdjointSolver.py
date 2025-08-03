@@ -45,5 +45,13 @@ def test_full_gradient_computation_runs(optimiser):
     assert optimiser.grad.shape == (len(optimiser.current_params),)
 
 def test_adjoint_method_sweep(optimiser):
-    
-    optimiser._compute_adjoint_gradient_sweep(np.linspace(-0.05,0.05,21))
+    print("Commencing test")
+    baseline_param = 0.19971691
+    sweep_vals = np.linspace(-0.05, 0.05, 21) + baseline_param
+
+    print("commencing sweep")
+    gradients = optimiser._compute_adjoint_gradient_sweep(sweep_vals)
+
+    assert gradients is not None
+    assert isinstance(gradients, np.ndarray)
+    assert gradients.shape == (len(sweep_vals), len(optimiser.current_params))
