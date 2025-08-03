@@ -43,3 +43,7 @@ def test_full_gradient_computation_runs(optimiser):
     assert optimiser.grad is not None
     assert isinstance(optimiser.grad, np.ndarray)
     assert optimiser.grad.shape == (len(optimiser.current_params),)
+
+def test_adjoint_method_sweep(optimiser):
+    
+    optimiser._compute_adjoint_gradient_sweep(np.linspace(-0.05,0.05,21))

@@ -236,6 +236,11 @@ class AdjointOptimiser:
 
         return velocity_vectors
 
+    def sweep_param(self):
+        assert(len(self.current_params == 1))
+        
+
+
 
     def optimisation(self):
         # initialise optimizer
@@ -255,6 +260,51 @@ class AdjointOptimiser:
         # Return final design, training data
 
         pass
+
+    def _compute_adjoint_gradient_sweep(self, param_vals: np.ndarray) -> np.ndarray:
+
+        gradients = []
+
+        for val in param_vals:
+            self.current_params = np.array([val])
+            self._update_qiskit_design()
+
+            # --- Forward simulation
+            self.fwd_field_sParams = self._run_comsol_sim("FwdModel", is_adjoint=False)
+            self.fwd_field_data = self.fwd_field_sParams.eval_fields_over_mesh()
+            raw_E_at_JJ = self.fwd_field_sParams.eval_field_at_pts('E', np.array([[0,0,0]]))
+
+            # --- Estimate adjoint source strength
+            adjoint_strength = 2 * np.real(raw_E_at_JJ[0,1]) / (2 * np.pi * self.freq_value * 1.256637e-6)
+            self.adjoint_source_location = [0,0,1e-6]
+
+            # --- Perturbed shape (for poly_grad)
+            base_shape = self.shapely_constructor.make_polygons(self.current_params)
+            perturbed_params = self.current_params + self.param_perturbation
+            perturbed_shape = self.shapely_constructor.make_polygons(perturbed_params)
+            poly_base = shapely.unary_union(base_shape)
+            poly_pert = shapely.unary_union(perturbed_shape)
+            poly_grad = shapely.difference(poly_pert, poly_base)
+
+            # --- Adjoint simulation
+            self.adjoint_field_sParams = self._run_comsol_sim("AdjModel", is_adjoint=True)
+            adjoint_E = self.adjoint_field_sParams.eval_field_at_pts('E', self.fwd_field_data["coords"])
+
+            # --- Weighted inner product (Ap_x)
+            def calc_grad(point, poly_grad):
+                point = np.real(point)
+                dist = np.sqrt(shapely.distance(shapely.Point([point[0],point[1]]), poly_grad)**2 + point[2]**2)
+                return np.exp(-0.5*(dist/0.002)**2)
+
+            Ap_x = self.fwd_field_data['E'].copy()
+            for j, mesh_coord in enumerate(self.fwd_field_data['coords']):
+                Ap_x[j] *= calc_grad(mesh_coord, poly_grad)
+
+            v_Ap_x = np.dot(adjoint_E.flatten(), Ap_x.flatten())
+            gradients.append(v_Ap_x)
+
+        return np.array(gradients)
+
 
 
 
