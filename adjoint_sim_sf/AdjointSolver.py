@@ -1,3 +1,5 @@
+# AdjointSolver.py
+
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 os.environ["PMIX_MCA_gds"]="hash"
@@ -7,11 +9,9 @@ import qiskit_metal as metal
 from qiskit_metal import designs, draw
 from qiskit_metal import MetalGUI, Dict, open_docs
 
-# To create plots after geting solution data.
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Packages for the simple design
 from SQDMetal.Comps.Junctions import JunctionDolan
 import shapely
 from shapely import difference
@@ -27,12 +27,15 @@ from SQDMetal.Utilities.ShapelyEx import ShapelyEx
 from typing import Iterable
 
 from adjoint_sim_sf import DesignBuilder, PolygonConstructor
-    
+from adjoint_sim_sf.simulation import Simulation_Runner  
+
+
 class AdjointOptimiser:
-    def __init__(self, initial_parameters: np.array, lr: float, qiskit_builder: DesignBuilder, shapely_constructor: PolygonConstructor):
+    def __init__(self, initial_parameters: np.array, lr: float,
+                 qiskit_builder: DesignBuilder, shapely_constructor: PolygonConstructor):
         if COMSOL_Model._engine is None:
             raise RuntimeError("COMSOL engine not initialized. Call COMSOL_Model.init_engine() before running simulations.")
-            
+
         self.qiskit_builder = qiskit_builder
         self.shapely_constructor = shapely_constructor
         self.design = None
@@ -43,7 +46,7 @@ class AdjointOptimiser:
         self.adjoint_field_sParams = None
         self.fwd_E_data = None
         self.adjoint_E_data = None
-        
+
         self.current_Ap = None
         self.param_perturbation = 1e-5
         self.grad = None
@@ -52,38 +55,27 @@ class AdjointOptimiser:
         self.fwd_source_location = [-25e-3, 2e-3, 100e-6]
         self.adjoint_source_location = [0, 0, 100e-6]
 
-    def _run_sim(self, name: str, source_location: list, source_strength: float):
-        cmsl = COMSOL_Model(name)
-        sim = COMSOL_Simulation_RFsParameters(cmsl, adaptive='None')
-        cmsl.initialize_model(self.design, [sim], bottom_grounded=True)
-        cmsl.add_metallic(1, threshold=1e-12, fuse_threshold=1e-10)
-        cmsl.add_ground_plane()
-        cmsl.fuse_all_metals()
-        sim.create_port_JosephsonJunction('junction', L_J=4.3e-9, C_J=10e-15, R_J=10e3)
-        sim.add_electric_point_dipole(source_location, source_strength, [0, 1, 0])
-        cmsl.fine_mesh_around_comp_boundaries(['pad1', 'pad2'], minElementSize=10e-6, maxElementSize=50e-6)
-        cmsl.build_geom_mater_elec_mesh(skip_meshing=True, mesh_structure='Fine')
-        sim.set_freq_values([self.freq_value])
-        sim.run()
-        return sim
+        self.sim = Simulation_Runner(self.freq_value)      # ← NEW
 
+    # ---- helper wrappers now delegate to the runner ----
     def _get_field_at_junction(self, sim):
-        return sim.eval_field_at_pts('E', np.array([[0, 0, 0]]))
+        return self.sim.eval_field_at_pts(sim, 'E', np.array([[0, 0, 0]]))
 
     def _get_field_over_mesh(self, sim):
-        return sim.eval_fields_over_mesh()
+        return self.sim.eval_fields_over_mesh(sim)
 
+    # ---- core steps ----
     def _fwd_calculation(self):
         assert self.design
         self.design.rebuild()
-        self.fwd_field_sParams = self._run_sim("fwdmodel", self.fwd_source_location, 1.0)
+        self.fwd_field_sParams = self.sim.run_forward(self.design, self.fwd_source_location, 1.0)
 
     def _adjoint_calculation(self):
         assert self.design and self.fwd_field_sParams
         raw_E = self._get_field_at_junction(self.fwd_field_sParams)
         adj_strength = 2 * np.real(raw_E[0, 1]) / (2 * np.pi * self.freq_value * 1.256637e-6)
         self.design.rebuild()
-        self.adjoint_field_sParams = self._run_sim("adjmodel", self.adjoint_source_location, adj_strength)
+        self.adjoint_field_sParams = self.sim.run_adjoint(self.design, self.adjoint_source_location, adj_strength)
 
     def _update_qiskit_design(self):
         shapely_components = self.shapely_constructor.make_polygons(self.current_params)
@@ -98,24 +90,19 @@ class AdjointOptimiser:
         assert self.adjoint_field_sParams is not None, "Adjoint simulation must be run first."
         self.adjoint_E_data = {
             "coords": self.fwd_field_data["coords"],
-            "E": self.adjoint_field_sParams.eval_field_at_pts('E', self.fwd_field_data["coords"])
+            "E": self.sim.eval_field_at_pts(self.adjoint_field_sParams, 'E', self.fwd_field_data["coords"])
         }
-
 
     def _compute_Ap(self) -> list:
         base_shape = self.shapely_constructor.make_polygons(self.current_params)
         differences = []
-
         for i in range(len(self.current_params)):
             perturbed_params = np.copy(self.current_params)
             perturbed_params[i] += self.param_perturbation
             perturbed_shape = self.shapely_constructor.make_polygons(perturbed_params)
-
             difference = shapely.difference(shapely.unary_union(base_shape), shapely.unary_union(perturbed_shape))
             differences.append(difference)
-
         return differences
-
 
     def _compute_gradient(self):
         grads = self._compute_adjoint_gradient_sweep(np.array([self.current_params[0]]))
@@ -123,7 +110,6 @@ class AdjointOptimiser:
 
     def _compute_adjoint_gradient_sweep(self, param_vals: np.ndarray, verbose: bool = False) -> np.ndarray:
         gradients = []
-
         for val in param_vals:
             self.current_params = np.array([val])
             self._update_qiskit_design()
@@ -142,7 +128,7 @@ class AdjointOptimiser:
             poly_grad = shapely.difference(poly_pert, poly_base)
 
             self._adjoint_calculation()
-            adjoint_E = self.adjoint_field_sParams.eval_field_at_pts('E', self.fwd_field_data["coords"])
+            adjoint_E = self.sim.eval_field_at_pts(self.adjoint_field_sParams, 'E', self.fwd_field_data["coords"])
 
             def calc_grad(point, poly_grad):
                 point = np.real(point)
@@ -161,7 +147,6 @@ class AdjointOptimiser:
         return np.array(gradients)
 
 
-
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import numpy as np
@@ -169,6 +154,7 @@ if __name__ == "__main__":
     if COMSOL_Model._engine is None:
         COMSOL_Model.init_engine()
 
+    # NOTE: your baseline_param/optimiser are assumed defined elsewhere.
     sweep_vals = np.linspace(-0.05, 0.05, 21) + baseline_param
 
     print("commencing sweep")
@@ -178,16 +164,8 @@ if __name__ == "__main__":
 
     for grad in gradients:
         print(grad)
-    
+
     dg = np.array(gradients)
 
-    plt.plot(np.linspace(-0.05, 0.05, 21) , np.real(dg))
-    plt.plot(np.linspace(-0.05, 0.05, 21), np.imag(dg) )
-
-    
-
-
-
-
-
-        
+    plt.plot(np.linspace(-0.05, 0.05, 21), np.real(dg))
+    plt.plot(np.linspace(-0.05, 0.05, 21), np.imag(dg))
