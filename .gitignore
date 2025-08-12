@@ -3,6 +3,8 @@ adjoint_sim_sf.egg-info/*
 .pytest_cache/*
 env_check/*.vschode/
 .vscode/
+tests/__pycache__/
+adjoint_sim_sf/__pycache__
 
 .history/
 *mph

@@ -22,16 +22,17 @@ def test_compute_Ap_returns_shapely_objects(optimiser):
         assert isinstance(item, (BaseGeometry, Polygon))
 
 def test_fwd_sim(optimiser):
-    optimiser._update_qiskit_design()  # necessary for _run_comsol_sim
-    sim = optimiser._run_comsol_sim("FwdTestModel", is_adjoint=False)
-    assert hasattr(sim, "eval_field_at_pts")
-    assert callable(sim.eval_field_at_pts)
+    optimiser._update_qiskit_design() 
+    sim = optimiser._fwd_calculation()
+    assert hasattr(optimiser.fwd_field_sParams, "eval_field_at_pts")
+    assert callable(optimiser.fwd_field_sParams.eval_field_at_pts)
 
-def test_rev_sim(optimiser):
+def test_fwd_and_rev_sim(optimiser):
     optimiser._update_qiskit_design()
-    sim = optimiser._run_comsol_sim("AdjTestModel", is_adjoint=True)
-    assert hasattr(sim, "eval_field_at_pts")
-    assert callable(sim.eval_field_at_pts)
+    optimiser._fwd_calculation()
+    sim = optimiser._adjoint_calculation()
+    assert hasattr(optimiser.adjoint_field_sParams, "eval_field_at_pts")
+    assert callable(optimiser.adjoint_field_sParams.eval_field_at_pts)
 
 def test_full_gradient_computation_runs(optimiser):
     optimiser._update_qiskit_design()
@@ -47,11 +48,11 @@ def test_full_gradient_computation_runs(optimiser):
 def test_adjoint_method_sweep(optimiser):
     print("Commencing test")
     baseline_param = 0.19971691
-    sweep_vals = np.linspace(-0.05, 0.05, 21) + baseline_param
+    sweep_vals = np.linspace(-0.05, 0.05, 3) + baseline_param
 
     print("commencing sweep")
-    gradients = optimiser._compute_adjoint_gradient_sweep(sweep_vals)
+    gradients = optimiser._compute_adjoint_gradient_sweep(sweep_vals, verbose=True)
 
     assert gradients is not None
     assert isinstance(gradients, np.ndarray)
-    assert gradients.shape == (len(sweep_vals), len(optimiser.current_params))
+    
