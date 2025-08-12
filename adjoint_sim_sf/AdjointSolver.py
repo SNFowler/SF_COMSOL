@@ -27,7 +27,7 @@ from SQDMetal.Utilities.ShapelyEx import ShapelyEx
 from typing import Iterable
 
 from adjoint_sim_sf import DesignBuilder, PolygonConstructor
-from adjoint_sim_sf.simulation import Simulation_Runner  
+from adjoint_sim_sf.Simulation import SimulationRunner  
 
 
 class AdjointOptimiser:
@@ -55,7 +55,7 @@ class AdjointOptimiser:
         self.fwd_source_location = [-25e-3, 2e-3, 100e-6]
         self.adjoint_source_location = [0, 0, 100e-6]
 
-        self.sim = Simulation_Runner(self.freq_value)      # ← NEW
+        self.sim = SimulationRunner(self.freq_value)      # ← NEW
 
     # ---- helper wrappers now delegate to the runner ----
     def _get_field_at_junction(self, sim):
