@@ -51,22 +51,18 @@ class AdjointEvaluator:
     def _adjoint_calculation(self, design, adj_strength):
         design.rebuild()
         return self.sim.run_adjoint(design, self.adjoint_source_location, adj_strength)
-
-    def _calc_Ap_x(self, fwd_field_data, poly_grad):
-        def calc_grad(point):
-            point = np.real(point)
-            dist = np.sqrt(
-                shapely.distance(
-                    shapely.Point([point[0], point[1]]),
-                    poly_grad
-                ) ** 2 + point[2] ** 2
-            )
-            return np.exp(-0.5 * (dist / 0.002) ** 2)
+    
+    
+    def _calc_Ap_x(self, fwd_field_data, ap_obj):
+        """Apply A_p to the forward field: returns A_p x evaluated on mesh."""
+        def weight(point):
+            return self.parametric_designer.ap_weight(point, ap_obj)
 
         Ap_x = fwd_field_data['E'].copy()
         for j, mesh_coord in enumerate(fwd_field_data['coords']):
-            Ap_x[j] *= calc_grad(mesh_coord)
+            Ap_x[j] *= weight(mesh_coord)
         return Ap_x
+
 
     # --- main entry point ---
     def evaluate(self, params: np.ndarray, verbose: bool = False) -> tuple[float, np.ndarray]:

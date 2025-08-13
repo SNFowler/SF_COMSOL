@@ -1,0 +1,1 @@
+# will contain a single class covering all configuration
