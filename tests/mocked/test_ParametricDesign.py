@@ -2,6 +2,7 @@ import numpy as np
 import shapely
 from shapely.geometry import Polygon
 import types
+import pytest
 
 from adjoint_sim_sf.ParametricDesign import SymmetricTransmonDesign, SymmetricTransmonPolygonConstructor
 
@@ -78,4 +79,11 @@ def test_polygon_constructor_monotonicity_basic():
     a_large = sum(p.area for p in ctor.make_polygons(np.array([0.09], dtype=float)))
     assert a_large > a_small
 
+def test_show_polygons_runs(monkeypatch):
+    import matplotlib.pyplot as plt
+    # Prevent actual window popping up
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    design = SymmetricTransmonDesign()
+    design.show_polygons(np.array([0.1]))  # or whatever params make sense
 

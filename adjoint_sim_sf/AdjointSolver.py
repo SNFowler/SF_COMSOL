@@ -64,7 +64,6 @@ class AdjointEvaluator:
         return Ap_x
 
 
-    # --- main entry point ---
     def evaluate(self, params: np.ndarray, verbose: bool = False) -> tuple[float, np.ndarray]:
         """Run forward + adjoint sims for given params, return (loss, grad)."""
         design = self.parametric_designer.build_design(params)
@@ -123,7 +122,6 @@ if __name__ == "__main__":
     if COMSOL_Model._engine is None:
         COMSOL_Model.init_engine()
 
-    # NOTE: your baseline_param/optimiser are assumed defined elsewhere.
     sweep_vals = np.linspace(-0.05, 0.05, 21) + baseline_param
 
     print("commencing sweep")
