@@ -12,6 +12,10 @@ from SQDMetal.Comps.Junctions import JunctionDolan
 from SQDMetal.Comps.Polygons import PolyShapely, PolyRectangle
 from SQDMetal.Comps.Joints import Joint
 
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from shapely.plotting import plot_polygon
+
 ############################################################
 ###                 INTERFACES                           ###
 ############################################################
@@ -55,15 +59,27 @@ class DesignBuilder(ABC):
 
 class SymmetricTransmonDesign(ParametricDesign):
     def __init__(self):
-        self.polygon_constructor = SymmetricTransmonPolygonConstructor()
-        self.design_builder = SymmetricTransmonBuilder()
+        self._polygon_constructor = SymmetricTransmonPolygonConstructor()
+        self._design_builder = SymmetricTransmonBuilder()
 
     def build_design(self, parameters):
-        polygons = self.polygon_constructor.make_polygons(parameters)
-        return self.design_builder.get_design(polygons)
+        polygons = self._polygon_constructor.make_polygons(parameters)
+        return self._design_builder.get_design(polygons)
+    
+    def show_design(self, parameters):
+        design = self.build_design(parameters)
+        return self._design_builder.view_design(design)
+
+    def show_polygons(self, parameters) -> Figure:
+        """
+        Returns a Figure object, does not display the figure automatically when outside of a notebook.
+        """
+        
+        return self._polygon_constructor.show_polygons(parameters)
+
 
     def geometry(self, parameters):
-        return self.polygon_constructor.make_polygons(parameters)
+        return self._polygon_constructor.make_polygons(parameters)
 
     def compute_Ap(self, parameters, perturbation):
         """
@@ -101,6 +117,19 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         poly2 = poly2.buffer(0.04, join_style=self.join_style, quad_segs=self.quad_segs)
 
         return poly1, poly2
+    
+    def show_polygons(self, parameters):
+        polys = self.make_polygons(parameters)
+        fig, ax = plt.subplots()
+        for poly in polys:
+            if poly.geom_type == "Polygon":
+                plot_polygon(poly, ax=ax)
+            else:  # MultiPolygon
+                for p in poly.geoms:
+                    plot_polygon(p, ax=ax)
+        ax.set_aspect("equal")
+        return fig
+
 
 
 class SymmetricTransmonBuilder(DesignBuilder):
@@ -135,5 +164,20 @@ class SymmetricTransmonBuilder(DesignBuilder):
         return design
 
     def view_design(self, design):
-        gui = MetalGUI(design)
-        gui.rebuild()
+        try:
+            from IPython import get_ipython
+            if get_ipython() and 'IPKernelApp' in get_ipython().config:
+                gui = MetalGUI(design)
+                gui.rebuild()
+            else:
+                raise RuntimeError("view_design() only works inside a Jupyter notebook environment.")
+        except Exception:
+            raise RuntimeError("view_design() only works inside a Jupyter notebook environment.")
+
+ 
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    width = [0.19971691]
+    designer = SymmetricTransmonDesign()
+    fig = designer.show_polygons(width)
+    plt.show(block=True) 
