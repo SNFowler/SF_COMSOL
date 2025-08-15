@@ -1,5 +1,3 @@
-# AdjointSolver.py
-
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 os.environ["PMIX_MCA_gds"]="hash"
@@ -28,16 +26,20 @@ from typing import Iterable
 
 from adjoint_sim_sf.ParametricDesign import ParametricDesign
 from adjoint_sim_sf.Simulation import SimulationRunner  
+
+"""
+@TODO: Naming confusion. "design" in this code refers to both the qiskit design and to an instance of ParametricDesign class.
+"""
     
 class AdjointEvaluator:
-    def __init__(self, parametric_designer: ParametricDesign, perturb: float = 1e-5):
+    def __init__(self, parametric_designer: ParametricDesign):
         if COMSOL_Model._engine is None:
             raise RuntimeError(
                 "COMSOL engine not initialized. "
                 "Call COMSOL_Model.init_engine() before running simulations."
             )
         self.parametric_designer = parametric_designer
-        self.param_perturbation = perturb
+        self.param_perturbation = np.array([1e-5])
         self.freq_value = 8.0333e9
         self.fwd_source_location = [-25e-3, 2e-3, 100e-6]
         self.adjoint_source_location = [0, 0, 100e-6]
@@ -45,11 +47,9 @@ class AdjointEvaluator:
 
     # --- helpers ---
     def _fwd_calculation(self, design):
-        design.rebuild()
         return self.sim.run_forward(design, self.fwd_source_location, 1.0)
 
     def _adjoint_calculation(self, design, adj_strength):
-        design.rebuild()
         return self.sim.run_adjoint(design, self.adjoint_source_location, adj_strength)
     
     
@@ -66,10 +66,10 @@ class AdjointEvaluator:
 
     def evaluate(self, params: np.ndarray, verbose: bool = False) -> tuple[float, np.ndarray]:
         """Run forward + adjoint sims for given params, return (loss, grad)."""
-        design = self.parametric_designer.build_design(params)
+        qk_design = self.parametric_designer.build_qk_design(params)
 
         # forward pass
-        fwd_sparams = self._fwd_calculation(design)
+        fwd_sparams = self._fwd_calculation(qk_design)
         fwd_field_data = self.sim.eval_fields_over_mesh(fwd_sparams)
         raw_E_at_JJ = self.sim.eval_field_at_pts(
             fwd_sparams, 'E', np.array([[0, 0, 0]])
@@ -85,7 +85,7 @@ class AdjointEvaluator:
             2 * np.real(raw_E_at_JJ[0, 1])
             / (2 * np.pi * self.freq_value * 1.256637e-6)
         )
-        adj_sparams = self._adjoint_calculation(design, adj_strength)
+        adj_sparams = self._adjoint_calculation(qk_design, adj_strength)
         adj_E = self.sim.eval_field_at_pts(
             adj_sparams, 'E', fwd_field_data["coords"]
         )

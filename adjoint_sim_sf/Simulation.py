@@ -10,6 +10,9 @@ class SimulationRunner:
     def __init__(self, freq_value):
         self.freq_value = freq_value
 
+        self.latest_cmsl = None
+        self.latest_sim = None
+
     def run_forward(self, design, source_location, source_strength=1.0):
         """Run the forward simulation."""
         return self._run_sim("fwdmodel", design, source_location, source_strength)
@@ -42,4 +45,8 @@ class SimulationRunner:
         cmsl.build_geom_mater_elec_mesh(skip_meshing=True, mesh_structure='Fine')
         sim.set_freq_values([self.freq_value])
         sim.run()
+        
+        self.latest_cmsl = cmsl
+        self.latest_sim =  sim
+
         return sim

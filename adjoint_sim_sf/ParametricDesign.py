@@ -12,17 +12,16 @@ from SQDMetal.Comps.Junctions import JunctionDolan
 from SQDMetal.Comps.Polygons import PolyShapely, PolyRectangle
 from SQDMetal.Comps.Joints import Joint
 
-import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
+from matplotlib.pyplot import plt
 from shapely.plotting import plot_polygon
-
 ############################################################
 ###                 INTERFACES                           ###
 ############################################################
 
 class ParametricDesign(ABC):
     @abstractmethod
-    def build_design(self, parameters):
+    def build_qk_design(self, parameters):
         """Convert parameters directly to a Qiskit design."""
         pass
 
@@ -62,12 +61,12 @@ class SymmetricTransmonDesign(ParametricDesign):
         self._polygon_constructor = SymmetricTransmonPolygonConstructor()
         self._design_builder = SymmetricTransmonBuilder()
 
-    def build_design(self, parameters):
-        polygons = self._polygon_constructor.make_polygons(parameters)
-        return self._design_builder.get_design(polygons)
+    def build_qk_design(self, parameters):
+        geom = self._polygon_constructor.make_polygons(parameters)
+        return self._design_builder.get_design(geom)
     
     def show_design(self, parameters):
-        design = self.build_design(parameters)
+        design = self.build_qk_design(parameters)
         return self._design_builder.view_design(design)
 
     def show_polygons(self, parameters) -> Figure:
@@ -118,17 +117,18 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
 
         return poly1, poly2
     
-    def show_polygons(self, parameters):
+    def show_polygons(self, parameters) -> Figure:
         polys = self.make_polygons(parameters)
         fig, ax = plt.subplots()
         for poly in polys:
             if poly.geom_type == "Polygon":
                 plot_polygon(poly, ax=ax)
-            else:  # MultiPolygon
+            else:
                 for p in poly.geoms:
                     plot_polygon(p, ax=ax)
         ax.set_aspect("equal")
         return fig
+
 
 
 
