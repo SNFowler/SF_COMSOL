@@ -5,6 +5,7 @@ env_check/*.vschode/
 .vscode/
 **/__pycache__/
 adjoint_sim_sf/__pycache__
+scrap_notebooks/
 
 .history/
 *mph
