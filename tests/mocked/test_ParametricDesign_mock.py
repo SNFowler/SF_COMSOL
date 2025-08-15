@@ -58,7 +58,7 @@ def test_build_design_calls_builder_with_polys(monkeypatch):
     design.design_builder = fake
 
     params = np.array([0.06], dtype=float)
-    token = design.build_design(params)
+    token = design.build_qk_design(params)
 
     # Returned object is exactly whatever the builder returned
     assert token is fake.return_token
