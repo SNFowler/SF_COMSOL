@@ -45,7 +45,6 @@ class AdjointEvaluator:
         self.adjoint_source_location = [0, 0, 100e-6]
         self.sim = SimulationRunner(self.freq_value)
 
-    # --- helpers ---
     def _fwd_calculation(self, design):
         return self.sim.run_forward(design, self.fwd_source_location, 1.0)
 
@@ -64,7 +63,7 @@ class AdjointEvaluator:
         return Ap_x
 
 
-    def evaluate(self, params: np.ndarray, verbose: bool = False) -> tuple[float, np.ndarray]:
+    def evaluate(self, params: np.ndarray):
         """Run forward + adjoint sims for given params, return (loss, grad)."""
         qk_design = self.parametric_designer.build_qk_design(params)
 

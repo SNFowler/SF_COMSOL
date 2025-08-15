@@ -13,7 +13,7 @@ from SQDMetal.Comps.Polygons import PolyShapely, PolyRectangle
 from SQDMetal.Comps.Joints import Joint
 
 from matplotlib.figure import Figure
-from matplotlib.pyplot import plt
+import matplotlib.pyplot as plt
 from shapely.plotting import plot_polygon
 ############################################################
 ###                 INTERFACES                           ###
