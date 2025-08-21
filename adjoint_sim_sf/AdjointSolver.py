@@ -50,17 +50,32 @@ class AdjointEvaluator:
 
     def _adjoint_calculation(self, design, adj_strength):
         return self.sim.run_adjoint(design, self.adjoint_source_location, adj_strength)
-    
-    
-    def _calc_Ap_x(self, fwd_field_data, ap_obj):
-        """Apply A_p to the forward field: returns A_p x evaluated on mesh."""
-        def weight(point):
-            return self.parametric_designer.ap_weight(point, ap_obj)
 
-        Ap_x = fwd_field_data['E'].copy()
-        for j, mesh_coord in enumerate(fwd_field_data['coords']):
-            Ap_x[j] *= weight(mesh_coord)
-        return Ap_x
+    def _calc_Ap(self, current_param, fwd_field_data, perturbation):
+        """
+        Compute the inner product between the adjoint and forward field, weighted by A_p.
+        
+        WIP
+        """
+        pass
+        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(current_param, perturbation)
+        
+
+        # dr = 1 #TODO: Comput this
+        # for j, mesh_coord in enumerate(fwd_field_data['coords']):
+        #     Ap_x[j] *= weight(mesh_coord)
+        # return Ap_x
+
+    def _calc_adjoint_forward_product(self, current_param, perturbation, fwd_sparams, bwd_sparams):
+        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(current_param, perturbation, dr)
+
+        dr = 0.01 #TODO: extract this from the boundary field intelligently, or pass it from/to parametric designer -> polygon constructor
+
+        running_sum = 0
+        for v, (r1, r2) in zip(boundary_velocity_field, reference_coord):
+            # extract E value of fwd_sparams at r1, r2
+            # extract E value of bwd_sparams at r1, r2
+            # running_sum += take the inner product, scale by v
 
 
     def evaluate(self, params: np.ndarray):
@@ -69,7 +84,7 @@ class AdjointEvaluator:
 
         # forward pass
         fwd_sparams = self._fwd_calculation(qk_design)
-        fwd_field_data = self.sim.eval_fields_over_mesh(fwd_sparams)
+        # fwd_field_data = self.sim.eval_fields_over_mesh(fwd_sparams)
         raw_E_at_JJ = self.sim.eval_field_at_pts(
             fwd_sparams, 'E', np.array([[0, 0, 0]])
         )

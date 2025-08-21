@@ -1,20 +1,28 @@
 from abc import ABC, abstractmethod
 import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+from math import hypot
+from typing import List, Tuple
+
+import numpy as np
+
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+
+import shapely
+from shapely.geometry import MultiPolygon, Point, Polygon
+from shapely.ops import nearest_points
+from shapely.plotting import plot_polygon
 
 import qiskit_metal as metal
-from qiskit_metal import designs, draw
-from qiskit_metal import MetalGUI, Dict
-import numpy as np
-import shapely
-from shapely.geometry import Polygon
+from qiskit_metal import Dict, MetalGUI, designs, draw
+
 from SQDMetal.Comps.Junctions import JunctionDolan
-from SQDMetal.Comps.Polygons import PolyShapely, PolyRectangle
+from SQDMetal.Comps.Polygons import PolyRectangle, PolyShapely
 from SQDMetal.Comps.Joints import Joint
 
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
-from shapely.plotting import plot_polygon
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 ############################################################
 ###                 INTERFACES                           ###
 ############################################################
@@ -22,28 +30,30 @@ from shapely.plotting import plot_polygon
 class ParametricDesign(ABC):
     @abstractmethod
     def build_qk_design(self, parameters):
-        """Convert parameters directly to a Qiskit design."""
         pass
 
     @abstractmethod
     def geometry(self, parameters):
-        """Return the base geometry for given parameters."""
         pass
 
     @abstractmethod
     def compute_Ap(self, parameters, perturbation):
-        """
-        Compute the shape derivative (A_p) given parameters and a perturbation size.
-        The return type is deliberately untyped so it can be shapely or other formats.
-        """
+        pass
+
+    @abstractmethod
+    def compute_boundary_velocity(self, parameters, perturbation):
+        """Return boundary velocity info for a small parameter perturbation."""
         pass
 
 
 class PolygonConstructor(ABC):
     @abstractmethod
     def make_polygons(self, design_parameters):
-        """Generate polygons based on a tuple of design parameters."""
         pass
+
+    def compute_boundary_velocity(self, design_parameters, perturbation):
+        """Optional default; concrete classes may override."""
+        raise NotImplementedError
 
 
 class DesignBuilder(ABC):
@@ -87,7 +97,9 @@ class SymmetricTransmonDesign(ParametricDesign):
         base_geom = shapely.unary_union(self.geometry(parameters))
         pert_geom = shapely.unary_union(self.geometry(parameters + perturbation))
         return shapely.difference(pert_geom, base_geom)
-
+    
+    def compute_boundary_velocity(self, parameters: np.ndarray, perturbation: np.ndarray):
+        return self._polygon_constructor.compute_boundary_velocity(parameters, perturbation)
 
 class SymmetricTransmonPolygonConstructor(PolygonConstructor):
     def __init__(self, join_style=1, quad_segs=4):
@@ -95,6 +107,9 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         self.quad_segs = quad_segs
 
     def make_polygons(self, params):
+        """
+        Returns a multipolygon object.
+        """
         width = params[0]
         padCoordNums = [width, 0.02, 0.17926553, 0.25, 0.25]
 
@@ -115,7 +130,7 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         poly2 = Polygon(padCoords2).buffer(-0.04, join_style=self.join_style, quad_segs=self.quad_segs)
         poly2 = poly2.buffer(0.04, join_style=self.join_style, quad_segs=self.quad_segs)
 
-        return poly1, poly2
+        return shapely.MultiPolygon([poly1, poly2])
     
     def show_polygons(self, parameters) -> Figure:
         polys = self.make_polygons(parameters)
@@ -128,6 +143,59 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
                     plot_polygon(p, ax=ax)
         ax.set_aspect("equal")
         return fig
+    
+    def compute_boundary_velocity(self, params: np.ndarray, perturbation: np.ndarray):
+        reference_multipoly = self.make_polygons(params)
+        perturbed_multipoly = self.make_polygons(params + perturbation)
+
+        epsilon = np.linalg.norm(perturbation)
+
+        if epsilon == 0:
+            raise ValueError("magnitude of perturbation must be nonzero")
+
+        polys = [reference_multipoly] if isinstance(reference_multipoly, Polygon) else list(reference_multipoly.geoms)
+        perturbed_boundary = perturbed_multipoly.boundary
+
+        velocities = []                 # [poly][ring][i]
+        reference_coords = []           # [poly][ring][i] -> (x,y)
+        nearest_perturbed_coords = []   # [poly][ring][i] -> (x,y)
+
+        for poly in polys:
+            rings = [poly.exterior] + list(poly.interiors)
+
+            poly_vels = []
+            poly_refs = []
+            poly_corrs = []
+
+            for ring in rings:
+                coords = list(ring.coords)
+                if len(coords) > 1 and coords[0] == coords[-1]:
+                    coords = coords[:-1]
+
+                ring_vels = []
+                ring_refs = []
+                ring_corrs = []
+
+                for x_i, y_i in coords:
+                    p = Point(x_i, y_i)
+                    q, _ = nearest_points(perturbed_boundary, p)
+
+                    d = hypot(q.x - x_i, q.y - y_i)   # use the correspondence we already have
+                    sign = -1 if reference_multipoly.covers(q) else 1
+                    ring_vels.append(sign * d / epsilon)
+
+                    ring_refs.append((x_i, y_i))
+                    ring_corrs.append((q.x, q.y))
+
+                poly_vels.append(ring_vels)
+                poly_refs.append(ring_refs)
+                poly_corrs.append(ring_corrs)
+
+            velocities.append(poly_vels)
+            reference_coords.append(poly_refs)
+            nearest_perturbed_coords.append(poly_corrs)
+
+        return velocities, reference_coords, nearest_perturbed_coords
 
 
 
