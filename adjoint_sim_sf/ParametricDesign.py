@@ -180,7 +180,7 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
                     p = Point(x_i, y_i)
                     q, _ = nearest_points(perturbed_boundary, p)
 
-                    d = hypot(q.x - x_i, q.y - y_i)   # use the correspondence we already have
+                    d = hypot(q.x - x_i, q.y - y_i) 
                     sign = -1 if reference_multipoly.covers(q) else 1
                     ring_vels.append(sign * d / epsilon)
 
@@ -201,8 +201,13 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
 
 
 class SymmetricTransmonBuilder(DesignBuilder):
-    def get_design(self, shapely_components):
-        assert len(shapely_components) == 2
+    def get_design(self, multipoly):
+        import shapely
+        print(shapely.__version__)
+
+
+        assert shapely.get_num_geometries(multipoly) == 2
+        poly1, poly2 = multipoly.geoms
 
         design = designs.DesignPlanar({}, overwrite_enabled=True)
         design.chips.main.size.size_x = '800um'
@@ -216,7 +221,6 @@ class SymmetricTransmonBuilder(DesignBuilder):
             layer=2, finger_width='0.4um', t_pad_size='0.385um',
             squid_width='5.4um', prong_width='0.9um'))
 
-        poly1, poly2 = shapely_components
         PolyShapely(design, 'pad1', options=dict(strShapely=poly1.__str__()))
         PolyShapely(design, 'pad2', options=dict(strShapely=poly2.__str__()))
 
