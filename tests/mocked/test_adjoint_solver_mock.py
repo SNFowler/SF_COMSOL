@@ -18,10 +18,6 @@ class _FakeParametricDesign:
     def compute_Ap(self, params, perturb):
         self.compute_Ap_calls += 1
         return self.A_p
-    def ap_weight(self, point, ap_obj):
-        assert ap_obj is self.A_p
-        self.ap_weight_calls += 1
-        return 1.0
 
 class _FakeSim:
     def eval_field_at_pts(self, field, points): return np.ones((len(points), 3))
