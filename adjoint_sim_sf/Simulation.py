@@ -21,13 +21,13 @@ class SimulationRunner:
         """Run the adjoint simulation."""
         return self._run_sim("adjmodel", design, source_location, source_strength)
 
-    def eval_field_at_pts(self, sim, field, points):
+    def eval_field_at_pts(self, sParams, points, field = "E"):
         """Evaluate the specified field at given points."""
-        return sim.eval_field_at_pts(field, points)
+        return sParams.eval_field_at_pts(field, points)
 
-    def eval_fields_over_mesh(self, sim):
+    def eval_fields_over_mesh(self, sParams):
         """Evaluate all fields over the simulation mesh."""
-        return sim.eval_fields_over_mesh()
+        return sParams.eval_fields_over_mesh()
 
     def _run_sim(self, name, design, source_location, source_strength):
         """Internal method to set up and run a COMSOL simulation."""
