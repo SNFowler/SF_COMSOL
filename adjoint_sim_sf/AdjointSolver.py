@@ -41,6 +41,7 @@ class AdjointEvaluator:
         self.parametric_designer = parametric_designer
         self.param_perturbation = np.array([1e-5])
         self.freq_value = 8.0333e9
+        self.fwd_source_strength = 1.0
         self.fwd_source_location = [-25e-3, 2e-3, 100e-6]
         self.adjoint_source_location = [0, 0, 100e-6]
         self.sim = SimulationRunner(self.freq_value)
@@ -50,6 +51,17 @@ class AdjointEvaluator:
 
     def _adjoint_calculation(self, design, adj_strength):
         return self.sim.run_adjoint(design, self.adjoint_source_location, adj_strength)
+    
+    def _adjoint_strength(self, fwd_sparams, adjoint_location):
+
+        raw_E_at_JJ = self.sim.eval_field_at_pts(fwd_sparams,np.array([adjoint_location]))
+        adj_strength = (
+            2 * np.real(raw_E_at_JJ[0, 1])
+            / (2 * np.pi * self.freq_value * 1.256637e-6)
+        )
+
+        return adj_strength
+
 
     def _calc_Ap(self, current_param, fwd_field_data, perturbation):
         """
@@ -66,19 +78,76 @@ class AdjointEvaluator:
         #     Ap_x[j] *= weight(mesh_coord)
         # return Ap_x
 
-    def _calc_adjoint_forward_product(self, current_param, perturbation, fwd_sparams, bwd_sparams):
-        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(current_param, perturbation, dr)
+    def _calc_adjoint_forward_product(self, current_param, perturbation, fwd_sparams, adj_sparams):
+        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(current_param, perturbation)
 
         dr = 0.01 #TODO: extract this from the boundary field intelligently, or pass it from/to parametric designer -> polygon constructor
 
         running_sum = 0
-        for v, (r1, r2) in zip(boundary_velocity_field, reference_coord):
-            # extract E value of fwd_sparams at r1, r2
-            # extract E value of bwd_sparams at r1, r2
-            # running_sum += take the inner product, scale by v
 
+        #TODO: Enforce non-2D
+        r3 = 0
+
+        #TODO: Vectorise this entire process and inner product for efficiency.
+        
+        #TODO: Do this cleverly with numpy
+
+        flat_boundary_velocity_field =  [v for multipoly_velocities in boundary_velocity_field for v in multipoly_velocities[0]]
+        flat_reference_coord = [coord_pair for multipoly_boundary_coord in reference_coord for coord_pair in multipoly_boundary_coord[0]]
+
+        for v, (r1, r2) in zip(flat_boundary_velocity_field, flat_reference_coord):
+            local_fwd_vec =     self.sim.eval_field_at_pts(fwd_sparams, [[r1, r2, r3]])
+            local_adj_vec =     self.sim.eval_field_at_pts(adj_sparams, [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
+            
+            print(local_fwd_vec.shape)
+            print(local_adj_vec.shape)
+
+            running_sum += v*(local_adj_vec.T@local_fwd_vec)
+
+        return running_sum 
 
     def evaluate(self, params: np.ndarray):
+        """
+        Run forward + adjoint sims for given params, return (loss, grad).
+        Boundary velocity version
+        """
+        qk_design = self.parametric_designer.build_qk_design(params)
+
+        # forward pass
+        fwd_sparams = self._fwd_calculation(qk_design)
+        # fwd_field_data = self.sim.eval_fields_over_mesh(fwd_sparams)
+        raw_E_at_JJ = self.sim.eval_field_at_pts(
+            fwd_sparams, 'E', np.array([[0, 0, 0]])
+        )
+
+        # get A_p (shape derivative) from design
+        poly_grad = self.parametric_designer.compute_Ap(
+            params, self.param_perturbation
+        )
+
+        # adjoint pass
+        adj_strength = (
+            2 * np.real(raw_E_at_JJ[0, 1])
+            / (2 * np.pi * self.freq_value * 1.256637e-6)
+        )
+        adj_sparams = self._adjoint_calculation(qk_design, adj_strength)
+        adj_E = self.sim.eval_field_at_pts(
+            adj_sparams, 'E', fwd_field_data["coords"]
+        )
+
+        # compute gradient
+        Ap_x = self._calc_Ap_x(fwd_field_data, poly_grad)
+        grad_val = np.dot(adj_E.flatten(), Ap_x.flatten())
+
+        if verbose:
+            print(f"Grad = {np.real(grad_val)} + {np.imag(grad_val)}j")
+
+        # placeholder loss
+        loss_val = np.linalg.norm(raw_E_at_JJ)
+
+        return loss_val, np.array([grad_val])
+
+    def evaluate_old(self, params: np.ndarray):
         """Run forward + adjoint sims for given params, return (loss, grad)."""
         qk_design = self.parametric_designer.build_qk_design(params)
 
