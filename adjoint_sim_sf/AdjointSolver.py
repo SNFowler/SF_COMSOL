@@ -74,25 +74,20 @@ class AdjointEvaluator:
 
     def _calc_Ap(self, current_param, fwd_field_data, perturbation):
         """
-        Compute the inner product between the adjoint and forward field, weighted by A_p.
-        
-        WIP
+        WIP: In the future will facilitate non-boundary velocity methods
         """
-        pass
-        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(current_param, perturbation)
-        
-
-        # dr = 1 #TODO: Comput this
-        # for j, mesh_coord in enumerate(fwd_field_data['coords']):
-        #     Ap_x[j] *= weight(mesh_coord)
-        # return Ap_x
+        raise NotImplementedError
 
     def _convert_unit(self, coord):
         # @TODO: Get this working for np.array and multidimensional coord.
         return coord * self.param_to_sim_scale
 
 
-    def _calc_adjoint_forward_product(self, current_param, perturbation, fwd_sparams, adj_sparams):
+    def _calc_adjoint_forward_product(self, 
+                                      current_param: np.ndarray, 
+                                      perturbation: np.ndarray, 
+                                      fwd_sparams: COMSOL_Simulation_RFsParameters, 
+                                      adj_sparams: COMSOL_Simulation_RFsParameters):
         
         
         boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(current_param, perturbation)
@@ -120,16 +115,12 @@ class AdjointEvaluator:
             local_fwd_vec =     self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', [[r1, r2, r3]])
             local_adj_vec =     self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
             
-            print(local_fwd_vec.shape)
-            print(local_adj_vec.shape)
-
-
             # Taking the inner product. Note the vectors are intially in row form. 
             running_sum += v*(local_adj_vec@local_fwd_vec.T)*dr
 
         return running_sum 
 
-    def evaluate(self, params: np.ndarray, verbose = False):
+    def evaluate(self, params: np.ndarray, perturbation, verbose = False):
         """
         Run forward + adjoint sims for given params, return (loss, grad).
         Boundary velocity version
@@ -139,72 +130,27 @@ class AdjointEvaluator:
         # forward pass
         fwd_sparams = self._fwd_calculation(qk_design)
         # fwd_field_data = self.sim.eval_fields_over_mesh(fwd_sparams)
-        raw_E_at_JJ = self.sim_runner.eval_field_at_pts(
-            fwd_sparams, 'E', np.array([[0, 0, 0]])
-        )
-
-        # get A_p (shape derivative) from design
-        poly_grad = self.parametric_designer.compute_Ap(
-            params, self.param_perturbation
-        )
-
-        # adjoint pass
-        adj_strength = (
-            2 * np.real(raw_E_at_JJ[0, 1])
-            / (2 * np.pi * self.freq_value * 1.256637e-6)
-        )
-        adj_sparams = self._adjoint_calculation(qk_design, adj_strength)
-        adj_E = self.sim_runner.eval_field_at_pts(
-            adj_sparams, 'E', fwd_field_data["coords"]
-        )
-
-        # compute gradient
-        # lambda_Ap_x = self._calc_adjoint_forward_product(params,  )
-        Ap_x = self._calc_Ap_x(fwd_field_data, poly_grad)
-        grad_val = np.dot(adj_E.flatten(), Ap_x.flatten())
-
-        if verbose:
-            print(f"Grad = {np.real(grad_val)} + {np.imag(grad_val)}j")
-
-        # placeholder loss
-        loss_val = np.linalg.norm(raw_E_at_JJ)
-
-        return loss_val, np.array([grad_val])
-
-    def evaluate_old(self, params: np.ndarray, verbose = False):
-        """Run forward + adjoint sims for given params, return (loss, grad)."""
-        qk_design = self.parametric_designer.build_qk_design(params)
-
-        # forward pass
-        fwd_sparams = self._fwd_calculation(qk_design)
-        # fwd_field_data = self.sim.eval_fields_over_mesh(fwd_sparams)
-        raw_E_at_JJ = self.sim_runner.eval_field_at_pts(
-            fwd_sparams, 'E', np.array([[0, 0, 0]])
-        )
-
-        # get A_p (shape derivative) from design
-        poly_grad = self.parametric_designer.compute_Ap(
-            params, self.param_perturbation
-        )
-
-        # adjoint pass
-        adj_strength = (
-            2 * np.real(raw_E_at_JJ[0, 1])
-            / (2 * np.pi * self.freq_value * 1.256637e-6)
-        )
-        adj_sparams = self._adjoint_calculation(qk_design, adj_strength)
-        adj_E = self.sim_runner.eval_field_at_pts(
-            adj_sparams, 'E', fwd_field_data["coords"]
-        )
-
-        # compute gradient
-
         
-        Ap_x = self._calc_Ap_x(fwd_field_data, poly_grad)
-        grad_val = np.dot(adj_E.flatten(), Ap_x.flatten())
+        adjoint_strength = self._adjoint_strength(
+            fwd_sparams, self.adjoint_source_location
+        )
+
+        adj_sparams = self._adjoint_calculation(qk_design, adjoint_strength)
+
+        lambda_Ap_x = self._calc_adjoint_forward_product(
+        params, perturbation, fwd_sparams, adj_sparams
+        )
+
+        # This is slightly wrong. Recheck math.
+        loss =  self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', np.array([self.adjoint_source_location]))
+        grad = -lambda_Ap_x
 
         if verbose:
-            print(f"Grad = {np.real(grad_val)} + {np.imag(grad_val)}j")
+            print(f"Abs: {abs(grad)} Grad = {np.real(grad)} + {np.imag(grad)}j")
+
+        return grad, loss
+
+       
 
         # placeholder loss
         loss_val = np.linalg.norm(raw_E_at_JJ)
@@ -232,26 +178,52 @@ class Optimiser:
         self.params -= self.lr * grad
         self.history.append((self.params.copy(), loss))
         return loss, grad
+    
+    def sweep(self, center: float = 0.199, width: float = 0.04, num: int = 21,
+                perturbation = None, verbose: bool = False):
+        if not perturbation:
+            perturbation = self.evaluator.param_perturbation
+
+        param_range = np.linspace(center - width, center + width, num)
+        losses = []
+        grads = []
+        for i, x in enumerate(param_range):
+            p = [x]
+            grad, loss = self.evaluator.evaluate(p, perturbation, verbose=verbose)  # expects (grad, loss)
+            grads.append(grad)
+            losses.append(loss)
+        return param_range, losses, grads
+
 
 if __name__ == "__main__":
-    pass
-    # import matplotlib.pyplot as plt
-    # import numpy as np
 
-    # if COMSOL_Model._engine is None:
-    #     COMSOL_Model.init_engine()
+    import math
+    import time
+    import numpy as np
+    import matplotlib.pyplot as plt
 
-    # sweep_vals = np.linspace(-0.05, 0.05, 21) + baseline_param
 
-    # print("commencing sweep")
-    # gradients = optimiser._compute_adjoint_gradient_sweep(sweep_vals)
+    from adjoint_sim_sf.ParametricDesign import SymmetricTransmonDesign
+    from adjoint_sim_sf.AdjointSolver import Optimiser, AdjointEvaluator
+    from SQDMetal.COMSOL.Model import COMSOL_Model
 
-    # COMSOL_Model.close_all_models()
+    if COMSOL_Model._engine is None:
+            COMSOL_Model.init_engine()
 
-    # for grad in gradients:
-    #     print(grad)
 
-    # dg = np.array(gradients)
 
-    # plt.plot(np.linspace(-0.05, 0.05, 21), np.real(dg))
-    # plt.plot(np.linspace(-0.05, 0.05, 21), np.imag(dg))
+    params = np.array([.119], dtype=float)
+    perturbation = np.array([0.01], dtype=float)
+
+    # Build design and evaluator
+    parametric_designer = SymmetricTransmonDesign()
+    adjoint_evaluator = AdjointEvaluator(parametric_designer)
+    design = parametric_designer.build_qk_design(params)
+    optimiser = Optimiser(params, 0.01, adjoint_evaluator)
+
+    param_range, losses, grads = optimiser.sweep(center=0.199, width=0.04, num=15, verbose=True)
+    grads = np.array(grads)  # Convert list to array
+
+    plt.plot(param_range, np.real(grads[:, 0, 0]))
+    plt.plot(param_range, np.imag(grads[:, 0, 0]), 'y')
+    plt.show()
