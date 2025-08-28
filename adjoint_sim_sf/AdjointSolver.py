@@ -34,6 +34,7 @@ from adjoint_sim_sf.Simulation import SimulationRunner
 class AdjointEvaluator:
     """
     @TODO: Units are not consistent between parameters, COMSOL simulation and QiskitMetal. 
+    @TODO: Velocity units wrong.
     """
     def __init__(self, parametric_designer: ParametricDesign):
         if COMSOL_Model._engine is None:
@@ -44,7 +45,7 @@ class AdjointEvaluator:
         self.parametric_designer = parametric_designer
         self.param_perturbation = np.array([1e-5])          # in mm
         self.freq_value = 8.0333e9
-        self.fwd_source_strength = 1e3
+        self.fwd_source_strength = 1e-2
         self.fwd_source_location = [300e-6, 300e-6, 100e-6]  # in meters
         self.adjoint_source_location = [0, 0, 100e-6]        # in meters
         self.sim_runner = SimulationRunner(self.freq_value)
@@ -58,9 +59,6 @@ class AdjointEvaluator:
         return self.sim_runner.run_adjoint(design, self.adjoint_source_location, adj_strength)
     
     def _adjoint_strength(self, fwd_sparams, adjoint_location):
-        # For the moment we are rescaling this 
-
-        rescaling_factor = 1e-6
 
         raw_E_at_JJ = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', np.array([adjoint_location]))
         adj_strength = (
@@ -68,7 +66,7 @@ class AdjointEvaluator:
             / (2 * np.pi * self.freq_value * 1.256637e-6)
         )
 
-        return adj_strength*rescaling_factor
+        return adj_strength
     
     def save(self):
         self.sim_runner.save()
@@ -89,15 +87,23 @@ class AdjointEvaluator:
         #     Ap_x[j] *= weight(mesh_coord)
         # return Ap_x
 
+    def _convert_unit(self, coord):
+        # @TODO: Get this working for np.array and multidimensional coord.
+        return coord * self.param_to_sim_scale
+
+
     def _calc_adjoint_forward_product(self, current_param, perturbation, fwd_sparams, adj_sparams):
+        
+        
         boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(current_param, perturbation)
 
-        dr = 0.01 #TODO: extract this from the boundary field intelligently, or pass it from/to parametric designer -> polygon constructor
+        dr = 0.005 # mm
+         #TODO: extract this from the boundary field intelligently, or pass it from/to parametric designer -> polygon constructor
 
         running_sum = 0
 
         #TODO: Enforce non-2D
-        r3 = 0.001
+        r3 = 1e-6
 
         #TODO: Vectorise this entire process and inner product for efficiency.
         
@@ -107,15 +113,19 @@ class AdjointEvaluator:
         flat_reference_coord = [coord_pair for multipoly_boundary_coord in reference_coord for coord_pair in multipoly_boundary_coord[0]]
 
         for v, (r1, r2) in zip(flat_boundary_velocity_field, flat_reference_coord):
-            r1 = r1 * 1e-3
-            r2 = r2 * 1e-3
+            v = self._convert_unit(v)
+            r1 = self._convert_unit(r1)
+            r2 = self._convert_unit(r2)
+
             local_fwd_vec =     self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', [[r1, r2, r3]])
             local_adj_vec =     self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
             
             print(local_fwd_vec.shape)
             print(local_adj_vec.shape)
 
-            running_sum += v*(local_adj_vec.T@local_fwd_vec)*dr
+
+            # Taking the inner product. Note the vectors are intially in row form. 
+            running_sum += v*(local_adj_vec@local_fwd_vec.T)*dr
 
         return running_sum 
 
@@ -149,6 +159,7 @@ class AdjointEvaluator:
         )
 
         # compute gradient
+        # lambda_Ap_x = self._calc_adjoint_forward_product(params,  )
         Ap_x = self._calc_Ap_x(fwd_field_data, poly_grad)
         grad_val = np.dot(adj_E.flatten(), Ap_x.flatten())
 
@@ -187,6 +198,8 @@ class AdjointEvaluator:
         )
 
         # compute gradient
+
+        
         Ap_x = self._calc_Ap_x(fwd_field_data, poly_grad)
         grad_val = np.dot(adj_E.flatten(), Ap_x.flatten())
 

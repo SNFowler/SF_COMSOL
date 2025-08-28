@@ -109,9 +109,10 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
     def make_polygons(self, params):
         """
         Returns a multipolygon object.
+        Units are in mm, converted to m downstream of this class.
         """
         width = params[0]
-        padCoordNums = [width, 0.02, 0.17926553, 0.25, 0.25]
+        padCoordNums = [width, 0.02, 0.17926553, 0.25, 0.25] #mm
 
         padCoords = [
             [-0.05, 0.012], 
