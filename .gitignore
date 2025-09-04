@@ -11,3 +11,5 @@ scrap_notebooks/
 *.mph
 *.mph.*
 Images/*
+AdjointOptimisation/
+adjoint_sim_sf/comsol_output
