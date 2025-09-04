@@ -1,4 +1,5 @@
 import os
+import math
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 os.environ["PMIX_MCA_gds"]="hash"
 
@@ -50,6 +51,9 @@ class AdjointEvaluator:
         self.adjoint_source_location = [0, 0, 100e-6]        # in meters
         self.sim_runner = SimulationRunner(self.freq_value)
 
+        self.adjoint_rotation = math.pi*3/4 #radians rotates the adjoint vector into complex plane. Compensates for not performing a proper negative frequency simulation.
+        self.adjoint_conjugation = False
+
         self.param_to_sim_scale = 1e-3
 
     def _fwd_calculation(self, design):
@@ -84,13 +88,13 @@ class AdjointEvaluator:
 
 
     def _calc_adjoint_forward_product(self, 
-                                      current_param: np.ndarray, 
-                                      perturbation: np.ndarray, 
+                                      boundary_velocity_field,
+                                      reference_coord,
                                       fwd_sparams: COMSOL_Simulation_RFsParameters, 
-                                      adj_sparams: COMSOL_Simulation_RFsParameters):
+                                      adj_sparams: COMSOL_Simulation_RFsParameters,
+                                      adjoint_rotation: float = 0,
+                                      adjoint_conjugation: bool = False):
         
-        
-        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(current_param, perturbation)
 
         dr = 0.005 # mm
          #TODO: extract this from the boundary field intelligently, or pass it from/to parametric designer -> polygon constructor
@@ -107,6 +111,8 @@ class AdjointEvaluator:
         flat_boundary_velocity_field =  [v for multipoly_velocities in boundary_velocity_field for v in multipoly_velocities[0]]
         flat_reference_coord = [coord_pair for multipoly_boundary_coord in reference_coord for coord_pair in multipoly_boundary_coord[0]]
 
+        phase = np.exp(1j * float(adjoint_rotation)) if adjoint_rotation else 1.0 + 0.0j
+
         for v, (r1, r2) in zip(flat_boundary_velocity_field, flat_reference_coord):
             v = self._convert_unit(v)
             r1 = self._convert_unit(r1)
@@ -115,6 +121,10 @@ class AdjointEvaluator:
             local_fwd_vec =     self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', [[r1, r2, r3]])
             local_adj_vec =     self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
             
+            local_adj_vec = local_adj_vec * phase
+            if adjoint_conjugation:
+                local_adj_vec = np.conj(local_adj_vec)
+
             # Taking the inner product. Note the vectors are intially in row form. 
             running_sum += v*(local_adj_vec@local_fwd_vec.T)*dr
 
@@ -122,7 +132,8 @@ class AdjointEvaluator:
 
     def evaluate(self, params: np.ndarray, perturbation, verbose = False):
         """
-        Run forward + adjoint sims for given params, return (loss, grad).
+        Run forward + adjoint sims for given params, return (grad, loss). 
+        grad is a complex number.
         Boundary velocity version
         """
         qk_design = self.parametric_designer.build_qk_design(params)
@@ -137,20 +148,21 @@ class AdjointEvaluator:
 
         adj_sparams = self._adjoint_calculation(qk_design, adjoint_strength)
 
-        lambda_Ap_x = self._calc_adjoint_forward_product(
-        params, perturbation, fwd_sparams, adj_sparams
+        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(params, perturbation)
+
+        inner_product = self._calc_adjoint_forward_product(
+        boundary_velocity_field, reference_coord, fwd_sparams, adj_sparams
         )
 
         # This is slightly wrong. Recheck math.
+        grad = -inner_product
         loss =  self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', np.array([self.adjoint_source_location]))
-        grad = -lambda_Ap_x
+        
 
         if verbose:
             print(f"Abs: {abs(grad)} Grad = {np.real(grad)} + {np.imag(grad)}j")
 
         return grad, loss
-
-       
 
         # placeholder loss
         loss_val = np.linalg.norm(raw_E_at_JJ)
@@ -166,6 +178,15 @@ class AdjointEvaluator:
         plane_inds = (np.abs(z)<1e-6)
         plt.scatter(x[plane_inds], y[plane_inds], c=np.clip(np.abs(Ez[plane_inds]), 0,1e14))
 
+
+    def sims(self, params, perturbation):
+        qk = self.parametric_designer.build_qk_design(params)
+        fwd = self._fwd_calculation(qk)
+        adj = self._adjoint_calculation(qk, self._adjoint_strength(fwd, self.adjoint_source_location))
+        loss = self.sim_runner.eval_field_at_pts(fwd, 'E', np.array([self.adjoint_source_location]))
+        return fwd, adj, loss
+
+
 class Optimiser:
     def __init__(self, initial_params: np.ndarray, lr: float, evaluator: AdjointEvaluator):
         self.params = np.asarray(initial_params, float)
@@ -174,37 +195,96 @@ class Optimiser:
         self.history = []  # list of (params, loss)
 
     def step(self, verbose: bool = False):
-        loss, grad = self.evaluator.evaluate(self.params, verbose=verbose)
+        grad, loss = self.evaluator.evaluate(self.params, verbose=verbose)
         self.params -= self.lr * grad
         self.history.append((self.params.copy(), loss))
-        return loss, grad
+        return grad, loss
     
+    def _make_param_range(self, center, width, num):
+        return np.linspace(center - width, center + width, num)
+
+    def _open_file(self, filename, tag=None):
+        fn = filename if str(filename).endswith(".dat") else f"{filename}.dat"
+        if tag:
+            fn = os.path.join(filename, f"{tag}.dat")
+        d = os.path.dirname(fn)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        exists = os.path.exists(fn)
+        f = open(fn, "a" if exists else "w")
+        if not exists:
+            f.write("param\tloss\treal_grad\timag_grad\tabs_grad\n")
+        return f
+
+    def _write_row(self, f, x, loss, grad):
+        L = float(np.asarray(loss).ravel()[0])
+        G = complex(np.asarray(grad).ravel()[0])
+        f.write(f"{x:.10e}\t{L:.10e}\t{G.real:.10e}\t{G.imag:.10e}\t{abs(G):.10e}\n")
+
     def sweep(self, center: float = 0.199, width: float = 0.04, num: int = 21,
-                perturbation = None, verbose: bool = False):
-        if not perturbation:
+              adj_rotation=None, conjugations=(False,),
+              perturbation=None, verbose: bool = False, filename=None):
+        if perturbation is None:
             perturbation = self.evaluator.param_perturbation
 
-        param_range = np.linspace(center - width, center + width, num)
-        losses = []
-        grads = []
-        for i, x in enumerate(param_range):
+        param_range = self._make_param_range(center, width, num)
+        losses, grads = [], []
+
+        for x in param_range:
             p = [x]
-            grad, loss = self.evaluator.evaluate(p, perturbation, verbose=verbose)  # expects (grad, loss)
+            if adj_rotation: self.evaluator.adjoint_rotation = adj_rotation
+
+            grad, loss = self.evaluator.evaluate(p, perturbation, verbose=verbose)
             grads.append(grad)
             losses.append(loss)
+
+        if filename:
+            with self._open_file(filename) as f:
+                for x, L, G in zip(param_range, losses, grads):
+                    self._write_row(f, x, L, G)
+
         return param_range, losses, grads
+
+    def sweep_reusing_fields(self, center=0.199, width=0.04, num=21,
+                             angles=(0.0,), conjugations=(False,),
+                             perturbation=None, verbose=False, filename_base=None):
+        if perturbation is None:
+            perturbation = self.evaluator.param_perturbation
+
+        param_range = self._make_param_range(center, width, num)
+
+        for x in param_range:
+            p = [x]
+            fwd, adj, loss = self.evaluator.sims(p, perturbation)
+            boundary_velocity_field, reference_coord, _ = \
+                self.evaluator.parametric_designer.compute_boundary_velocity(p, perturbation)
+
+            for conj in conjugations:
+                for ang in angles:
+                    grad = -self.evaluator._calc_adjoint_forward_product(
+                        boundary_velocity_field, reference_coord,
+                        fwd, adj,
+                        adjoint_rotation=float(ang),
+                        adjoint_conjugation=bool(conj)
+                    )
+                    if filename_base:
+                        tag = f"conj={'T' if conj else 'F'}_ang={float(ang):.4f}rad"
+                        with self._open_file(filename_base, tag=tag) as f:
+                            self._write_row(f, x, loss, grad)
+
+            if verbose:
+                print(f"x={x:.6f} done")
+
+        return param_range
+
 
 
 if __name__ == "__main__":
 
-    import math
-    import time
-    import numpy as np
     import matplotlib.pyplot as plt
 
 
     from adjoint_sim_sf.ParametricDesign import SymmetricTransmonDesign
-    from adjoint_sim_sf.AdjointSolver import Optimiser, AdjointEvaluator
     from SQDMetal.COMSOL.Model import COMSOL_Model
 
     if COMSOL_Model._engine is None:
