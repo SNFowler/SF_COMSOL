@@ -156,11 +156,12 @@ class AdjointEvaluator:
 
         # This is slightly wrong. Recheck math.
         grad = -inner_product
-        loss =  self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', np.array([self.adjoint_source_location]))
-        
+        E_at_target =  self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', np.array([self.adjoint_source_location]))
+      
+        loss = (E_at_target) @ (np.conj(E_at_target).T)
 
         if verbose:
-            print(f"Abs: {abs(grad)} Grad = {np.real(grad)} + {np.imag(grad)}j")
+            print(f"Loss: {loss}Abs: {abs(grad)} Grad = {np.real(grad)} + {np.imag(grad)}j")
 
         return grad, loss
 
@@ -242,6 +243,8 @@ class Optimiser:
             with self._open_file(filename) as f:
                 for x, L, G in zip(param_range, losses, grads):
                     self._write_row(f, x, L, G)
+        else: 
+            print("no filename to save data")
 
         return param_range, losses, grads
 

@@ -74,11 +74,11 @@ def test_calls_happen_once_each(monkeypatch):
 
     # Spy on the instance methods with counters
     fwd_calls = {"n": 0}; adj_calls = {"n": 0}
-    orig_fwd = ev.sim.run_forward; orig_adj = ev.sim.run_adjoint
+    orig_fwd = ev.sim_runner.run_forward; orig_adj = ev.sim_runner.run_adjoint
 
-    monkeypatch.setattr(ev.sim, "run_forward",
+    monkeypatch.setattr(ev.sim_runner, "run_forward",
         lambda *a, **k: (fwd_calls.__setitem__("n", fwd_calls["n"]+1) or orig_fwd(*a, **k)))
-    monkeypatch.setattr(ev.sim, "run_adjoint",
+    monkeypatch.setattr(ev.sim_runner, "run_adjoint",
         lambda *a, **k: (adj_calls.__setitem__("n", adj_calls["n"]+1) or orig_adj(*a, **k)))
 
     ev.evaluate(np.array([0.06]))

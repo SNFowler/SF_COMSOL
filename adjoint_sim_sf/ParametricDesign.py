@@ -204,7 +204,6 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
 class SymmetricTransmonBuilder(DesignBuilder):
     def get_design(self, multipoly):
         import shapely
-        print(shapely.__version__)
 
 
         assert shapely.get_num_geometries(multipoly) == 2
