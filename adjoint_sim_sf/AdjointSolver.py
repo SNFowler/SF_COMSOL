@@ -164,11 +164,6 @@ class AdjointEvaluator:
             print(f"Loss: {loss}Abs: {abs(grad)} Grad = {np.real(grad)} + {np.imag(grad)}j")
 
         return grad, loss
-
-        # placeholder loss
-        loss_val = np.linalg.norm(raw_E_at_JJ)
-
-        return loss_val, np.array([grad_val])
     
     def visualise(self, sims_params):
         field_data = self.sim_runner.eval_fields_over_mesh(sims_params)
@@ -279,6 +274,36 @@ class Optimiser:
                 print(f"x={x:.6f} done")
 
         return param_range
+
+    def gradient_descent(self, initial_param, lr=0.01, pertubation=None, num_steps=50, verbose=False):
+        # Accept the existing (misspelled) argument name; map to the internal variable used elsewhere
+        perturbation = self.evaluator.param_perturbation if pertubation is None else pertubation
+
+        # Initialise params and (optionally) learning rate for this run
+        self.params = np.asarray(initial_param, dtype=float)
+        local_lr = float(lr)
+
+        grads = []
+        losses = []
+
+        for k in range(int(num_steps)):
+            grad, loss = self.evaluator.evaluate(self.params, perturbation, verbose=False)
+            # Update (your code elsewhere subtracts complex grad directly; keep that behavior)
+            self.params -= local_lr * np.array([grad.imag])
+            # Log minimal state
+            self.history.append((self.params.copy(), loss))
+            print(params)
+            grads.append(grad)
+            losses.append(loss)
+            if verbose:
+                G = complex(np.asarray(grad).ravel()[0])
+                L = float(np.asarray(loss).ravel()[0])
+                print(f"step={k:03d}  param={self.params.ravel()[0]:.10e}  loss={L:.10e}  grad={G.real:.10e}+{G.imag:.10e}j")
+
+        return np.asarray(self.params, dtype=self.params.dtype), np.array(losses), np.array(grads)
+
+        
+        
 
 
 
