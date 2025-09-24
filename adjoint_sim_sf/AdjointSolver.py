@@ -51,8 +51,8 @@ class AdjointEvaluator:
         self.adjoint_source_location = [0, 0, 100e-6]        # in meters
         self.sim_runner = SimulationRunner(self.freq_value)
 
-        self.adjoint_rotation = math.pi*3/4 #radians rotates the adjoint vector into complex plane. Compensates for not performing a proper negative frequency simulation.
-        self.adjoint_conjugation = False
+        self.adjoint_rotation = 0 #radians rotates the adjoint vector into complex plane. Compensates for not performing a proper negative frequency simulation.
+        self.adjoint_conjugation = True
 
         self.param_to_sim_scale = 1e-3
 
@@ -151,11 +151,14 @@ class AdjointEvaluator:
         boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(params, perturbation)
 
         inner_product = self._calc_adjoint_forward_product(
-        boundary_velocity_field, reference_coord, fwd_sparams, adj_sparams
-        )
+                boundary_velocity_field, reference_coord, fwd_sparams, adj_sparams,
+                adjoint_rotation=self.adjoint_rotation,
+                adjoint_conjugation=self.adjoint_conjugation
+            )
 
-        # This is slightly wrong. Recheck math.
-        grad = -inner_product
+        # For a real scalar objective, the gradient is the real part of the complex sensitivity
+        grad_complex = -inner_product
+        grad = 2.0 * np.real(grad_complex) 
         E_at_target =  self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', np.array([self.adjoint_source_location]))
       
         loss = (E_at_target) @ (np.conj(E_at_target).T)
