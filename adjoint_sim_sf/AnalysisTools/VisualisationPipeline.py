@@ -93,7 +93,6 @@ def gradient_suite(
 
     return out_path
 
-
 def gradient_overlay(
     data_path: Path,
     *,

@@ -51,9 +51,7 @@ class AdjointEvaluator:
         self.adjoint_source_location = [0, 0, 100e-6]        # in meters
         self.sim_runner = SimulationRunner(self.freq_value)
 
-        self.adjoint_rotation = 0 #radians rotates the adjoint vector into complex plane. Compensates for not performing a proper negative frequency simulation.
-        self.adjoint_conjugation = True
-
+        self.adjoint_rotation = math.pi/2 
         self.param_to_sim_scale = 1e-3
 
     def _fwd_calculation(self, design):
@@ -92,8 +90,7 @@ class AdjointEvaluator:
                                       reference_coord,
                                       fwd_sparams: COMSOL_Simulation_RFsParameters, 
                                       adj_sparams: COMSOL_Simulation_RFsParameters,
-                                      adjoint_rotation: float = 0,
-                                      adjoint_conjugation: bool = False):
+                                      adjoint_rotation: float = 0):
         
 
         dr = 0.005 # mm
@@ -118,15 +115,15 @@ class AdjointEvaluator:
             r1 = self._convert_unit(r1)
             r2 = self._convert_unit(r2)
 
+            # complete the forward and adjoint vectors. Note that the adjoint vector is actually the complex conjugate (but not the transpose) of the expected adjoint vector.
+
             local_fwd_vec =     self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', [[r1, r2, r3]])
-            local_adj_vec =     self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
+            local_adj_vec_conj =     self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
             
-            local_adj_vec = local_adj_vec * phase
-            if adjoint_conjugation:
-                local_adj_vec = np.conj(local_adj_vec)
+            local_adj_vec_conj = local_adj_vec_conj * local_adj_vec_conj
 
             # Taking the inner product. Note the vectors are intially in row form. 
-            running_sum += v*(local_adj_vec@local_fwd_vec.T)*dr
+            running_sum += v*(local_adj_vec_conj@local_fwd_vec.T)*dr
 
         return running_sum 
 
@@ -152,9 +149,7 @@ class AdjointEvaluator:
 
         inner_product = self._calc_adjoint_forward_product(
                 boundary_velocity_field, reference_coord, fwd_sparams, adj_sparams,
-                adjoint_rotation=self.adjoint_rotation,
-                adjoint_conjugation=self.adjoint_conjugation
-            )
+                adjoint_rotation=self.adjoint_rotation)
 
         # For a real scalar objective, the gradient is the real part of the complex sensitivity
         grad_complex = -inner_product
@@ -221,7 +216,7 @@ class Optimiser:
         f.write(f"{x:.10e}\t{L:.10e}\t{G.real:.10e}\t{G.imag:.10e}\t{abs(G):.10e}\n")
 
     def sweep(self, center: float = 0.199, width: float = 0.04, num: int = 21,
-              adj_rotation=None, conjugations=(False,),
+              adj_rotation=None,
               perturbation=None, verbose: bool = False, filename=None):
         if perturbation is None:
             perturbation = self.evaluator.param_perturbation
@@ -247,7 +242,7 @@ class Optimiser:
         return param_range, losses, grads
 
     def sweep_reusing_fields(self, center=0.199, width=0.04, num=21,
-                             angles=(0.0,), conjugations=(False,),
+                             angles=(0.0,),     
                              perturbation=None, verbose=False, filename_base=None):
         if perturbation is None:
             perturbation = self.evaluator.param_perturbation
@@ -260,21 +255,18 @@ class Optimiser:
             boundary_velocity_field, reference_coord, _ = \
                 self.evaluator.parametric_designer.compute_boundary_velocity(p, perturbation)
 
-            for conj in conjugations:
-                for ang in angles:
-                    grad = -self.evaluator._calc_adjoint_forward_product(
-                        boundary_velocity_field, reference_coord,
-                        fwd, adj,
-                        adjoint_rotation=float(ang),
-                        adjoint_conjugation=bool(conj)
-                    )
-                    if filename_base:
-                        tag = f"conj={'T' if conj else 'F'}_ang={float(ang):.4f}rad"
-                        with self._open_file(filename_base, tag=tag) as f:
-                            self._write_row(f, x, loss, grad)
+            
+            for ang in angles:
+                grad = -self.evaluator._calc_adjoint_forward_product(
+                    boundary_velocity_field, reference_coord,
+                    fwd, adj)
+                if filename_base:
+                    tag = f"ang={float(ang):.4f}rad"
+                    with self._open_file(filename_base, tag=tag) as f:
+                        self._write_row(f, x, loss, grad)
 
-            if verbose:
-                print(f"x={x:.6f} done")
+        if verbose:
+            print(f"x={x:.6f} done")
 
         return param_range
 

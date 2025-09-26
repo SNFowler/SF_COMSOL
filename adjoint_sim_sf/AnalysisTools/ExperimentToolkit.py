@@ -22,7 +22,6 @@ class SweepSettings:
     num: int = 21
     reuse_fields: bool = False
     angles: Sequence[float] = (0.0,)
-    conjugations: Sequence[bool] = (False,)
     adjoint_rotation: Optional[float] = None
     filename_stem: str = "sweep"
 
@@ -180,7 +179,6 @@ def _run_standard_sweep(
         width=sweep.width,
         num=sweep.num,
         adj_rotation=sweep.adjoint_rotation,
-        conjugations=tuple(sweep.conjugations),
         filename=filename,
     )
     return [output]
@@ -195,24 +193,21 @@ def _run_reuse_sweep(
     resume: bool,
 ) -> List[Path]:
     outputs: List[Path] = []
-    for conj in sweep.conjugations:
-        for angle in sweep.angles:
-            tag = f"{prefix}__conj{'T' if conj else 'F'}__ang{angle:.4f}rad"
-            dat_path = run_dir / f"{tag}.dat"
-            if resume and dat_path.exists():
-                outputs.append(dat_path)
+    for angle in sweep.angles:
+        tag = f"{prefix}_ang{angle:.4f}rad"
+        dat_path = run_dir / f"{tag}.dat"
+        if resume and dat_path.exists():
+            outputs.append(dat_path)
     optimiser.sweep_reusing_fields(
         center=sweep.center,
         width=sweep.width,
         num=sweep.num,
         angles=tuple(sweep.angles),
-        conjugations=tuple(sweep.conjugations),
         filename_base=str(run_dir),
     )
-    for conj in sweep.conjugations:
-        for angle in sweep.angles:
-            tag = f"{prefix}__conj{'T' if conj else 'F'}__ang{angle:.4f}rad"
-            outputs.append(run_dir / f"{tag}.dat")
+    for angle in sweep.angles:
+        tag = f"{prefix}__ang{angle:.4f}rad"
+        outputs.append(run_dir / f"{tag}.dat")
     return outputs
 
 
