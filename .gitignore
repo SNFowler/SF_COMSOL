@@ -10,6 +10,8 @@ scrap_notebooks/
 .history/
 *.mph
 *.mph.*
-Images/*
+GoodImages/*
 AdjointOptimisation/
 adjoint_sim_sf/comsol_output
+AGENTS.md
+

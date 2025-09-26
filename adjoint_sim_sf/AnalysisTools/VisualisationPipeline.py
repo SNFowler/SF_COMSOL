@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, List, Mapping, Optional, Sequence
+from typing import List, Mapping, Optional, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,13 +30,6 @@ class PlotStyle:
         }
     )
 
-    def apply(self) -> None:
-        plt.rcParams.update(self.rc_params)
-
-    def reset(self) -> None:
-        plt.rcdefaults()
-
-
 def load_dat(path: Path) -> Mapping[str, np.ndarray]:
     with path.open("r", encoding="utf-8") as handle:
         header = handle.readline().strip().split("\t")
@@ -49,7 +42,7 @@ def load_dat(path: Path) -> Mapping[str, np.ndarray]:
 def gradient_suite(
     data_path: Path,
     *,
-    output_root: Path = Path("Images") / "automation",
+    output_root: Path = Path("images"),
     base_name: Optional[str] = None,
     include_empirical: bool = True,
     style: PlotStyle | None = None,
@@ -65,13 +58,13 @@ def gradient_suite(
     empirical = columns.get("empirical_gradient") if include_empirical else None
 
     output_root = Path(output_root)
+    if output_root.exists() and output_root.is_dir() and output_root.name != "images":
+        output_root = output_root / "images"
     output_root.mkdir(parents=True, exist_ok=True)
     name = base_name or data_path.stem
 
     style = style or PlotStyle()
-    prev_params = plt.rcParams.copy()
-    try:
-        style.apply()
+    with plt.rc_context(style.rc_params):
         fig, axes = plt.subplots(2, 2, sharex="col", figsize=style.figure_size, constrained_layout=True)
         axes[0, 0].plot(param, grad_real, color="C0")
         axes[0, 0].set_title("Adjoint grad (real)")
@@ -97,8 +90,6 @@ def gradient_suite(
         out_path = output_root / f"{name}_gradient_suite.png"
         fig.savefig(out_path, dpi=style.dpi)
         plt.close(fig)
-    finally:
-        plt.rcParams.update(prev_params)
 
     return out_path
 
@@ -106,7 +97,7 @@ def gradient_suite(
 def gradient_overlay(
     data_path: Path,
     *,
-    output_root: Path = Path("Images") / "automation",
+    output_root: Path = Path("images"),
     base_name: Optional[str] = None,
     style: PlotStyle | None = None,
 ) -> Path:
@@ -118,13 +109,13 @@ def gradient_overlay(
     empirical = columns.get("empirical_gradient")
 
     output_root = Path(output_root)
+    if output_root.exists() and output_root.is_dir() and output_root.name != "images":
+        output_root = output_root / "images"
     output_root.mkdir(parents=True, exist_ok=True)
     name = base_name or data_path.stem
 
     style = style or PlotStyle()
-    prev_params = plt.rcParams.copy()
-    try:
-        style.apply()
+    with plt.rc_context(style.rc_params):
         fig, ax = plt.subplots(figsize=style.figure_size)
         ax.plot(param, grad_abs, label="adjoint", color="C0")
         if empirical is not None:
@@ -137,8 +128,6 @@ def gradient_overlay(
         out_path = output_root / f"{name}_gradient_overlay.png"
         fig.savefig(out_path, dpi=style.dpi)
         plt.close(fig)
-    finally:
-        plt.rcParams.update(prev_params)
 
     return out_path
 
@@ -146,19 +135,19 @@ def gradient_overlay(
 def geometry_family(
     parameters: Sequence[Sequence[float]],
     *,
-    output_root: Path = Path("Images") / "automation",
+    output_root: Path = Path("images"),
     base_name: str = "geometry_family",
     labels: Optional[Sequence[str]] = None,
     style: PlotStyle | None = None,
 ) -> Path:
     designer = SymmetricTransmonDesign()
     output_root = Path(output_root)
+    if output_root.exists() and output_root.is_dir() and output_root.name != "images":
+        output_root = output_root / "images"
     output_root.mkdir(parents=True, exist_ok=True)
 
     style = style or PlotStyle()
-    prev_params = plt.rcParams.copy()
-    try:
-        style.apply()
+    with plt.rc_context(style.rc_params):
         fig, ax = plt.subplots(figsize=style.figure_size)
         for idx, params in enumerate(parameters):
             geom = designer.geometry(np.asarray(params, dtype=float))
@@ -173,8 +162,6 @@ def geometry_family(
         out_path = output_root / f"{base_name}_geometry.png"
         fig.savefig(out_path, dpi=style.dpi, bbox_inches="tight")
         plt.close(fig)
-    finally:
-        plt.rcParams.update(prev_params)
 
     return out_path
 
@@ -183,7 +170,7 @@ def boundary_velocity(
     params: Sequence[float],
     perturbation: Sequence[float],
     *,
-    output_root: Path = Path("Images") / "automation",
+    output_root: Path = Path("images"),
     base_name: str = "boundary_velocity",
     max_arrows: int = 6,
     style: PlotStyle | None = None,
@@ -211,12 +198,12 @@ def boundary_velocity(
     geom_pert = designer.geometry(np.asarray(params, dtype=float) + np.asarray(perturbation, dtype=float))
 
     output_root = Path(output_root)
+    if output_root.exists() and output_root.is_dir() and output_root.name != "images":
+        output_root = output_root / "images"
     output_root.mkdir(parents=True, exist_ok=True)
 
     style = style or PlotStyle()
-    prev_params = plt.rcParams.copy()
-    try:
-        style.apply()
+    with plt.rc_context(style.rc_params):
         fig, ax = plt.subplots(figsize=style.figure_size)
         _plot_polygons(ax, geom_ref, label="reference", color="C0")
         _plot_polygons(ax, geom_pert, label="perturbed", color="C1")
@@ -248,14 +235,8 @@ def boundary_velocity(
         out_path = output_root / f"{base_name}_boundary_velocity.png"
         fig.savefig(out_path, dpi=style.dpi, bbox_inches="tight")
         plt.close(fig)
-    finally:
-        plt.rcParams.update(prev_params)
 
     return out_path
-
-
-def verify(paths: Iterable[Path]) -> Mapping[str, bool]:
-    return {str(path): Path(path).exists() for path in paths}
 
 
 __all__ = [
@@ -265,5 +246,4 @@ __all__ = [
     "gradient_overlay",
     "geometry_family",
     "boundary_velocity",
-    "verify",
 ]
