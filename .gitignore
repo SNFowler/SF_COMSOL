@@ -3,8 +3,16 @@ adjoint_sim_sf.egg-info/*
 .pytest_cache/*
 env_check/*.vschode/
 .vscode/
-tests/__pycache__/
+**/__pycache__/
 adjoint_sim_sf/__pycache__
+scrap_notebooks/
 
+notebooks/
 .history/
-*mph
+*.mph
+*.mph.*
+GoodImages/*
+AdjointOptimisation/
+adjoint_sim_sf/comsol_output
+AGENTS.md
+
