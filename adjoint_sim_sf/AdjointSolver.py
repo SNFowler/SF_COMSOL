@@ -108,7 +108,7 @@ class AdjointEvaluator:
         flat_boundary_velocity_field =  [v for multipoly_velocities in boundary_velocity_field for v in multipoly_velocities[0]]
         flat_reference_coord = [coord_pair for multipoly_boundary_coord in reference_coord for coord_pair in multipoly_boundary_coord[0]]
 
-        phase = np.exp(1j * float(adjoint_rotation)) if adjoint_rotation else 1.0 + 0.0j
+        phase = np.exp(1j * float(adjoint_rotation))
 
         for v, (r1, r2) in zip(flat_boundary_velocity_field, flat_reference_coord):
             v = self._convert_unit(v)
@@ -120,7 +120,7 @@ class AdjointEvaluator:
             local_fwd_vec =     self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', [[r1, r2, r3]])
             local_adj_vec_conj =     self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
             
-            local_adj_vec_conj = local_adj_vec_conj * local_adj_vec_conj
+            local_adj_vec_conj = local_adj_vec_conj * phase
 
             # Taking the inner product. Note the vectors are intially in row form. 
             running_sum += v*(local_adj_vec_conj@local_fwd_vec.T)*dr
@@ -259,7 +259,7 @@ class Optimiser:
             for ang in angles:
                 grad = -self.evaluator._calc_adjoint_forward_product(
                     boundary_velocity_field, reference_coord,
-                    fwd, adj)
+                    fwd, adj, ang)
                 if filename_base:
                     tag = f"ang={float(ang):.4f}rad"
                     with self._open_file(filename_base, tag=tag) as f:
@@ -283,7 +283,7 @@ class Optimiser:
 
         for k in range(int(num_steps)):
             grad, loss = self.evaluator.evaluate(self.params, perturbation, verbose=False)
-            # Update (your code elsewhere subtracts complex grad directly; keep that behavior)
+           
             self.params -= local_lr * np.array([grad.imag])
             # Log minimal state
             self.history.append((self.params.copy(), loss))
