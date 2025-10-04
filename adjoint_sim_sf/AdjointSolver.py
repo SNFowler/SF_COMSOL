@@ -80,7 +80,7 @@ class AdjointEvaluator:
         self.sim_runner.save()
 
 
-    def _calc_Ap(self, current_param, fwd_field_data, perturbation):
+    def _calc_Ap(self, current_param, fwd_field_data, perturbation_vec):
         """
         WIP: In the future will facilitate non-boundary velocity methods
         """
@@ -133,7 +133,7 @@ class AdjointEvaluator:
 
         return running_sum 
 
-    def evaluate(self, params: np.ndarray, perturbation, verbose = False):
+    def evaluate(self, params: np.ndarray, perturbation_vec, verbose = False):
         """
         Run forward + adjoint sims for given params, return (grad, loss). 
         grad is a complex number.
@@ -151,7 +151,7 @@ class AdjointEvaluator:
 
         adj_sparams = self._adjoint_calculation(qk_design, adjoint_strength)
 
-        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(params, perturbation)
+        boundary_velocity_field, reference_coord, _ = self.parametric_designer.compute_boundary_velocity(params, perturbation_vec)
 
         inner_product = self._calc_adjoint_forward_product(
                 boundary_velocity_field, reference_coord, fwd_sparams, adj_sparams,
@@ -179,7 +179,7 @@ class AdjointEvaluator:
         plt.scatter(x[plane_inds], y[plane_inds], c=np.clip(np.abs(Ez[plane_inds]), 0,1e14))
 
 
-    def sims(self, params, perturbation):
+    def sims(self, params, perturbation_vec):
         qk = self.parametric_designer.build_qk_design(params)
         fwd = self._fwd_calculation(qk)
         adj = self._adjoint_calculation(qk, self._adjoint_strength(fwd, self.adjoint_source_locations))
@@ -222,19 +222,19 @@ class Optimiser:
         f.write(f"{x:.10e}\t{L:.10e}\t{G.real:.10e}\t{G.imag:.10e}\t{abs(G):.10e}\n")
 
     def sweep(self, center: float = 0.199, width: float = 0.04, num: int = 21,
-              adj_rotation=None,
-              perturbation=None, verbose: bool = False, filename=None):
-        if perturbation is None:
-            perturbation = self.evaluator.param_perturbation
+              adjoint_rotation=None,
+              perturbation_vec=None, verbose: bool = False, filename=None):
+        if perturbation_vec is None:
+            perturbation_vec = self.evaluator.param_perturbation
 
         param_range = self._make_param_range(center, width, num)
         losses, grads = [], []
 
         for x in param_range:
             p = [x]
-            if adj_rotation: self.evaluator.adjoint_rotation = adj_rotation
+            if adjoint_rotation: self.evaluator.adjoint_rotation = adjoint_rotation
 
-            grad, loss = self.evaluator.evaluate(p, perturbation, verbose=verbose)
+            grad, loss = self.evaluator.evaluate(p, perturbation_vec, verbose=verbose)
             grads.append(grad)
             losses.append(loss)
 
@@ -248,24 +248,24 @@ class Optimiser:
         return param_range, losses, grads
 
     def sweep_reusing_fields(self, center=0.199, width=0.04, num=21,
-                             angles=(0.0,),     
-                             perturbation=None, verbose=False, filename_base=None):
-        if perturbation is None:
-            perturbation = self.evaluator.param_perturbation
+                             adjoint_rotations=(0.0,),     
+                             perturbation_vec=None, verbose=False, filename_base=None):
+        if perturbation_vec is None:
+            perturbation_vec = self.evaluator.param_perturbation
 
         param_range = self._make_param_range(center, width, num)
 
         for x in param_range:
             p = [x]
-            fwd, adj, loss = self.evaluator.sims(p, perturbation)
+            fwd, adj, loss = self.evaluator.sims(p, perturbation_vec)
             boundary_velocity_field, reference_coord, _ = \
-                self.evaluator.parametric_designer.compute_boundary_velocity(p, perturbation)
+                self.evaluator.parametric_designer.compute_boundary_velocity(p, perturbation_vec)
 
             
-            for ang in angles:
+            for adjoint_rotation in adjoint_rotations:
                 grad = -self.evaluator._calc_adjoint_forward_product(
                     boundary_velocity_field, reference_coord,
-                    fwd, adj, ang)
+                    fwd, adj, adjoint_rotation)
                 if filename_base:
                     tag = f"ang={float(ang):.4f}rad"
                     with self._open_file(filename_base, tag=tag) as f:
@@ -278,7 +278,7 @@ class Optimiser:
 
     def gradient_descent(self, initial_param, lr=0.01, pertubation=None, num_steps=50, verbose=False):
         # Accept the existing (misspelled) argument name; map to the internal variable used elsewhere
-        perturbation = self.evaluator.param_perturbation if pertubation is None else pertubation
+        perturbation_vec = self.evaluator.param_perturbation if pertubation is None else pertubation
 
         # Initialise params and (optionally) learning rate for this run
         self.params = np.asarray(initial_param, dtype=float)
@@ -288,7 +288,7 @@ class Optimiser:
         losses = []
 
         for k in range(int(num_steps)):
-            grad, loss = self.evaluator.evaluate(self.params, perturbation, verbose=False)
+            grad, loss = self.evaluator.evaluate(self.params, perturbation_vec, verbose=False)
            
             self.params -= local_lr * np.array([grad.imag])
             # Log minimal state
@@ -322,7 +322,7 @@ if __name__ == "__main__":
 
 
     params = np.array([.119], dtype=float)
-    perturbation = np.array([0.01], dtype=float)
+    perturbation_vec = np.array([0.01], dtype=float)
 
     # Build design and evaluator
     parametric_designer = SymmetricTransmonDesign()
