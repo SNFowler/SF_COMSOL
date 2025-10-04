@@ -1,9 +1,14 @@
 from datetime import datetime
 import pathlib
 
+from dataclasses import dataclass
+
 import numpy as np
 from SQDMetal.COMSOL.Model import COMSOL_Model
 from SQDMetal.COMSOL.SimRFsParameter import COMSOL_Simulation_RFsParameters
+
+from adjoint_sim_sf import Source
+from typing import Lists
 
 
 class SimulationRunner:
@@ -17,7 +22,7 @@ class SimulationRunner:
         self.latest_cmsl = None
         self.latest_sim = None
 
-    def run_forward(self, design, source_locations, source_strength=20.0):
+    def run_forward(self, design, source_locations, source_strength):
         """Run the forward simulation."""
         dipole_moment_vecdir =  [0, 1, 0]
         return self._run_sim("fwdmodel", design, source_locations, source_strength, dipole_moment_vecdir)
