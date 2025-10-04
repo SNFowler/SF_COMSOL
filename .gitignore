@@ -14,5 +14,6 @@ notebooks/
 GoodImages/*
 AdjointOptimisation/
 adjoint_sim_sf/comsol_output
+adjoint_sim_sf/legacy
 AGENTS.md
 

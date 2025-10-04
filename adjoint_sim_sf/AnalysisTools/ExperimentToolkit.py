@@ -102,13 +102,13 @@ def _run_variant(variant: ExperimentVariant, run_dir: Path) -> ExperimentResult:
     evaluator.fwd_source_strength = float(variant.source_strength)
 
     sweep = variant.sweep
-    source_locations = list(variant.source_locations or [tuple(evaluator.fwd_source_location)])
+    source_locations = list(variant.source_locations or [tuple(evaluator.fwd_source_locations)])
 
     outputs: List[Path] = []
     metrics: List[Mapping[str, object]] = []
     images_dir = run_dir / "images"
     for index, location in enumerate(source_locations):
-        evaluator.fwd_source_location = list(location)
+        evaluator.fwd_source_locations = list(location)
         optimiser = Optimiser(np.asarray(variant.base_params, dtype=float), 0.01, evaluator)
 
         if sweep.reuse_fields:

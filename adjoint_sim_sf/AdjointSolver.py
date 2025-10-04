@@ -43,26 +43,32 @@ class AdjointEvaluator:
                 "COMSOL engine not initialized. "
                 "Call COMSOL_Model.init_engine() before running simulations."
             )
-        self.parametric_designer = parametric_designer
-        self.param_perturbation = np.array([1e-5])          # in mm
         self.freq_value = 8.0333e9
+        self.param_perturbation = np.array([1e-5])          # in mm
         self.fwd_source_strength = 1e-2
-        self.fwd_source_location = [300e-6, 300e-6, 100e-6]  # in meters
-        self.adjoint_source_location = [0, 0, 100e-6]        # in meters
-        self.sim_runner = SimulationRunner(self.freq_value)
-
+        self.fwd_source_locations = np.array([[300e-6, 300e-6, 100e-6]])  # in meters
+        self.adjoint_source_locations = np.array([[0, 0, 100e-6]])        # in meters
         self.adjoint_rotation = math.pi/2 
         self.param_to_sim_scale = 1e-3
 
+        self.parametric_designer = parametric_designer
+        self.sim_runner = SimulationRunner(self.freq_value)
+
     def _fwd_calculation(self, design):
-        return self.sim_runner.run_forward(design, self.fwd_source_location, self.fwd_source_strength)
+        return self.sim_runner.run_forward(design, self.fwd_source_locations, self.fwd_source_strength)
 
     def _adjoint_calculation(self, design, adj_strength):
-        return self.sim_runner.run_adjoint(design, self.adjoint_source_location, adj_strength)
+        return self.sim_runner.run_adjoint(design, self.adjoint_source_locations, adj_strength)
     
-    def _adjoint_strength(self, fwd_sparams, adjoint_location):
+    def _adjoint_strength(self, fwd_sparams: COMSOL_Simulation_RFsParameters, adjoint_locations: np.ndarray):
+        """
+        Evaluates the adjoint strength scalars at each source locations.
 
-        raw_E_at_JJ = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', np.array([adjoint_location]))
+        Args:
+            fwd_sparams: the output of the forward field simulation.
+            adjoint_locations: vector of points to evaluate the field strength at
+        """
+        raw_E_at_JJ = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', adjoint_locations)
         adj_strength = (
             2 * np.real(raw_E_at_JJ[0, 1])
             / (2 * np.pi * self.freq_value * 1.256637e-6)
@@ -140,7 +146,7 @@ class AdjointEvaluator:
         # fwd_field_data = self.sim.eval_fields_over_mesh(fwd_sparams)
         
         adjoint_strength = self._adjoint_strength(
-            fwd_sparams, self.adjoint_source_location
+            fwd_sparams, self.adjoint_source_locations
         )
 
         adj_sparams = self._adjoint_calculation(qk_design, adjoint_strength)
@@ -154,7 +160,7 @@ class AdjointEvaluator:
         # For a real scalar objective, the gradient is the real part of the complex sensitivity
         grad_complex = -inner_product
         grad = 2.0 * np.real(grad_complex) 
-        E_at_target =  self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', np.array([self.adjoint_source_location]))
+        E_at_target =  self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', self.adjoint_source_locations)
       
         loss = (E_at_target) @ (np.conj(E_at_target).T)
 
@@ -176,8 +182,8 @@ class AdjointEvaluator:
     def sims(self, params, perturbation):
         qk = self.parametric_designer.build_qk_design(params)
         fwd = self._fwd_calculation(qk)
-        adj = self._adjoint_calculation(qk, self._adjoint_strength(fwd, self.adjoint_source_location))
-        loss = self.sim_runner.eval_field_at_pts(fwd, 'E', np.array([self.adjoint_source_location]))
+        adj = self._adjoint_calculation(qk, self._adjoint_strength(fwd, self.adjoint_source_locations))
+        loss = self.sim_runner.eval_field_at_pts(fwd, 'E', self.adjoint_source_locations)
         return fwd, adj, loss
 
 
