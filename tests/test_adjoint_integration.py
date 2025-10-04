@@ -1,12 +1,10 @@
 import pytest
 import math
 import numpy as np
-
 from adjoint_sim_sf.ParametricDesign import SymmetricTransmonDesign
 from adjoint_sim_sf.AdjointSolver import Optimiser, AdjointEvaluator
 
 # --- Fixtures
-
 @pytest.fixture(scope="module")
 def params():
     return np.array([0.199])
@@ -28,7 +26,8 @@ def design(parametric_designer, params):
     return parametric_designer.build_qk_design(params)
 
 @pytest.fixture(scope='module')
-def boundary_inner_product(params, perturbation, adjoint_evaluator, design):
+def simulation_results(adjoint_evaluator, design):
+    """Run forward and adjoint simulations once for reuse in tests."""
     evaluator = adjoint_evaluator
     
     # Run forward simulation
@@ -36,30 +35,39 @@ def boundary_inner_product(params, perturbation, adjoint_evaluator, design):
     
     # Calculate adjoint strength and run adjoint simulation
     adjoint_strength = evaluator._adjoint_strength(
-        fwd_sparams, evaluator.adjoint_source_location
+        fwd_sparams, evaluator.adjoint_source_locations
     )
     adj_sparams = evaluator._adjoint_calculation(design, adjoint_strength)
     
-    # MISSING: Compute boundary velocity field and reference coordinates
-    boundary_velocity_field, reference_coord, _ = \
-        evaluator.parametric_designer.compute_boundary_velocity(params, perturbation)
-    
-    # Now call with correct arguments
-    value = evaluator._calc_adjoint_forward_product(
-        boundary_velocity_field, reference_coord, fwd_sparams, adj_sparams,
-        adjoint_rotation=evaluator.adjoint_rotation
-    )
-    return value
+    return fwd_sparams, adj_sparams
 
 # --- Tests
-
 def test_fwd_calc(adjoint_evaluator, design):
     adjoint_evaluator._fwd_calculation(design)
-
 
 def test_adj_calc(adjoint_evaluator, design):
     adjoint_evaluator._adjoint_calculation(design, 1)
 
+def test_boundary_inner_product(params, perturbation, adjoint_evaluator, simulation_results):
+    """Test the boundary inner product calculation."""
+    fwd_sparams, adj_sparams = simulation_results
+    
+    inner_product = adjoint_evaluator.compute_boundary_inner_product(
+        params, perturbation, fwd_sparams, adj_sparams
+    )
+    
+    assert inner_product is not None
+    assert isinstance(inner_product, (complex, np.complexfloating, np.ndarray))
 
-def test_inner_product_runs(boundary_inner_product):
-    assert boundary_inner_product is not None
+def test_evaluate(params, perturbation, adjoint_evaluator):
+    """Test the full evaluate method returns gradient and loss."""
+    grad, loss = adjoint_evaluator.evaluate(params, perturbation, verbose=False)
+    
+    # Check gradient exists and is numeric
+    assert grad is not None
+    assert np.isfinite(grad).all()
+    
+    # Check loss exists and is positive (field magnitude squared)
+    assert loss is not None
+    assert np.isfinite(loss).all()
+    assert np.real(loss) >= 0  # Loss should be non-negative
