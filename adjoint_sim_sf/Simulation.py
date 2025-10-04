@@ -17,15 +17,15 @@ class SimulationRunner:
         self.latest_cmsl = None
         self.latest_sim = None
 
-    def run_forward(self, design, source_location, source_strength=20.0):
+    def run_forward(self, design, source_locations, source_strength=20.0):
         """Run the forward simulation."""
         dipole_moment_vecdir =  [0, 1, 0]
-        return self._run_sim("fwdmodel", design, source_location, source_strength, dipole_moment_vecdir)
+        return self._run_sim("fwdmodel", design, source_locations, source_strength, dipole_moment_vecdir)
 
-    def run_adjoint(self, design, source_location, source_strength):
+    def run_adjoint(self, design, source_locations, source_strength):
         """Run the adjoint simulation."""
         dipole_moment_vecdir =  [0, 1, 0]
-        return self._run_sim("adjmodel", design, source_location, source_strength, dipole_moment_vecdir)
+        return self._run_sim("adjmodel", design, source_locations, source_strength, dipole_moment_vecdir)
 
     def eval_field_at_pts(self, sParams: COMSOL_Simulation_RFsParameters, expr, points, freq_index=1):
         return sParams.eval_field_at_pts(expr, points, freq_index)
@@ -44,10 +44,11 @@ class SimulationRunner:
         return coords * scale
 
 
-    def _run_sim(self, name, design, source_vec_pos, dipole_moment_p, dipole_moment_vecdir):
+    def _run_sim(self, name, design, src_locations_vec, dipole_moment_p, dipole_moment_vecdir):
         """Internal method to set up and run a COMSOL simulation.
         
         @TODO: dipole_moment_vecdir: unused
+        @TODO: Let this function accept multiple dipole moments, multiple sources and potentially multiple dipole_moments
         """
         cmsl = COMSOL_Model(name)
         sim = COMSOL_Simulation_RFsParameters(cmsl, adaptive='None')
@@ -61,7 +62,8 @@ class SimulationRunner:
 
         # add source
 
-        sim.add_electric_point_dipole(source_vec_pos, dipole_moment_p, dipole_moment_vecdir)
+        for src_location in src_locations_vec:
+            sim.add_electric_point_dipole(src_location, dipole_moment_p, dipole_moment_vecdir)
 
         # create mesh
         cmsl.fine_mesh_around_comp_boundaries(['pad1', 'pad2'],
