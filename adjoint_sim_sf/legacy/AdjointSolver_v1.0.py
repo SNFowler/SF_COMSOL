@@ -50,13 +50,15 @@ class AdjointEvaluator:
                 "COMSOL engine not initialized. "
                 "Call COMSOL_Model.init_engine() before running simulations."
             )
-        self.parametric_designer = parametric_designer
-        self.param_perturbation = np.array([1e-5])          # in mm
         self.freq_value = 8.0333e9
+        self.sim_runner = SimulationRunner(self.freq_value)
+        self.parametric_designer = parametric_designer
+        
+        self.param_perturbation = np.array([1e-5])          # in mm
         self.fwd_source_strength = 1e-2
         self.fwd_source_location = [300e-6, 300e-6, 100e-6]  # in meters
         self.adjoint_source_location = [0, 0, 100e-6]        # in meters
-        self.sim_runner = SimulationRunner(self.freq_value)
+       
 
         self.adjoint_rotation = math.pi/2 
         self.param_to_sim_scale = 1e-3
