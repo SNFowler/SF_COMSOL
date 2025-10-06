@@ -5,12 +5,12 @@ from adjoint_sim_sf.ParametricDesign import SymmetricTransmonDesign
 from adjoint_sim_sf import Optimiser, AdjointEvaluator
 
 # --- Fixtures
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="module", params=[np.array([0.199]), np.array([0.199, 0.25])])
 def params():
     return np.array([0.199])
 
 @pytest.fixture(scope="module")
-def perturbation():
+def single_perturbation():
     return np.array([0.01])
 
 @pytest.fixture(scope="module")
@@ -48,20 +48,21 @@ def test_fwd_calc(adjoint_evaluator, design):
 def test_adj_calc(adjoint_evaluator, design):
     adjoint_evaluator._adjoint_calculation(design, 1)
 
-def test_boundary_inner_product(params, perturbation, adjoint_evaluator, simulation_results):
+# run the next test for multiple parameter settings
+def test_boundary_inner_product(params, single_perturbation, adjoint_evaluator, simulation_results):
     """Test the boundary inner product calculation."""
     fwd_sparams, adj_sparams = simulation_results
     
     inner_product = adjoint_evaluator.compute_boundary_inner_product(
-        params, perturbation, fwd_sparams, adj_sparams
+        params, single_perturbation, fwd_sparams, adj_sparams
     )
     
     assert inner_product is not None
     assert isinstance(inner_product, (complex, np.complexfloating, np.ndarray))
 
-def test_evaluate(params, perturbation, adjoint_evaluator):
+def test_evaluate(params, single_perturbation, adjoint_evaluator):
     """Test the full evaluate method returns gradient and loss."""
-    grad, loss = adjoint_evaluator.evaluate(params, perturbation, verbose=False)
+    grad, loss = adjoint_evaluator.evaluate(params, single_perturbation, verbose=False)
     
     # Check gradient exists and is numeric
     assert grad is not None

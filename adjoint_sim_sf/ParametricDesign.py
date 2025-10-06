@@ -112,7 +112,10 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         Units are in mm, converted to m downstream of this class.
         """
         width = params[0]
-        padCoordNums = [width, 0.02, 0.17926553, 0.25, 0.25] #mm
+        height = params[1] if len(params) > 1 else 0.25
+
+
+        padCoordNums = [width, 0.02, 0.17926553, height, height] #mm
 
         padCoords = [
             [-0.05, 0.012], 
@@ -145,11 +148,11 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         ax.set_aspect("equal")
         return fig
     
-    def compute_boundary_velocity(self, params: np.ndarray, perturbation: np.ndarray):
+    def compute_boundary_velocity(self, params: np.ndarray, perturbation_vec: np.ndarray):
         reference_multipoly = self.make_polygons(params)
-        perturbed_multipoly = self.make_polygons(params + perturbation)
+        perturbed_multipoly = self.make_polygons(params + perturbation_vec)
 
-        epsilon = np.linalg.norm(perturbation)
+        epsilon = np.linalg.norm(perturbation_vec)
 
         if epsilon == 0:
             raise ValueError("magnitude of perturbation must be nonzero")
