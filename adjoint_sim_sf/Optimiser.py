@@ -1,3 +1,8 @@
+import numpy as np
+
+from .AdjointSolver import AdjointEvaluator
+
+
 class Optimiser:
     def __init__(self, initial_params: np.ndarray, lr: float, evaluator: AdjointEvaluator):
         self.params = np.asarray(initial_params, float)

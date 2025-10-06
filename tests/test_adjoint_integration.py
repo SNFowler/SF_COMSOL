@@ -2,7 +2,7 @@ import pytest
 import math
 import numpy as np
 from adjoint_sim_sf.ParametricDesign import SymmetricTransmonDesign
-from adjoint_sim_sf.AdjointSolver import Optimiser, AdjointEvaluator
+from adjoint_sim_sf import Optimiser, AdjointEvaluator
 
 # --- Fixtures
 @pytest.fixture(scope="module")

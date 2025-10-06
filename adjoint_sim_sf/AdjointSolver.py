@@ -25,8 +25,9 @@ from SQDMetal.COMSOL.SimRFsParameter import COMSOL_Simulation_RFsParameters
 from SQDMetal.Utilities.ShapelyEx import ShapelyEx
 from typing import Iterable
 
-from adjoint_sim_sf.ParametricDesign import ParametricDesign
-from adjoint_sim_sf.Simulation import SimulationRunner  
+from .ParametricDesign import ParametricDesign
+from .Simulation import SimulationRunner 
+from .Sources import Source 
 
 """
 @TODO: Naming confusion. "design" in this code refers to both the qiskit design and to an instance of ParametricDesign class.
@@ -55,10 +56,15 @@ class AdjointEvaluator:
         self.sim_runner = SimulationRunner(self.freq_value)
 
     def _fwd_calculation(self, design):
-        return self.sim_runner.run_forward(design, self.fwd_source_locations, self.fwd_source_strength)
+        # construct source objects
+        sources = [Source(loc, np.array([0, 1, 0]), self.fwd_source_strength) for loc in self.fwd_source_locations]
+
+        return self.sim_runner.run_forward(design, sources)
 
     def _adjoint_calculation(self, design, adj_strength):
-        return self.sim_runner.run_adjoint(design, self.adjoint_source_locations, adj_strength)
+        # construct source objects
+        sources = [Source(loc, np.array([0, 1, 0]), adj_strength) for loc in self.adjoint_source_locations]
+        return self.sim_runner.run_adjoint(design, sources)
     
     def _adjoint_strength(self, fwd_sparams: COMSOL_Simulation_RFsParameters, adjoint_locations: np.ndarray):
         """
@@ -108,8 +114,6 @@ class AdjointEvaluator:
         r3 = 1e-6
 
         #TODO: Vectorise this entire process and inner product for efficiency.
-        
-        #TODO: Do this cleverly with numpy
 
         flat_boundary_velocity_field =  [v for multipoly_velocities in boundary_velocity_field for v in multipoly_velocities[0]]
         flat_reference_coord = [coord_pair for multipoly_boundary_coord in reference_coord for coord_pair in multipoly_boundary_coord[0]]
