@@ -1,24 +1,22 @@
+import os
 import numpy as np
-
 from .AdjointSolver import AdjointEvaluator
 
 
-class Optimiser:
-    def __init__(self, initial_params: np.ndarray, lr: float, evaluator: AdjointEvaluator):
-        self.params = np.asarray(initial_params, float)
-        self.lr = float(lr)
-        self.evaluator = evaluator
-        self.history = []  # list of (params, loss)
-
-    def step(self, verbose: bool = False):
-        grad, loss = self.evaluator.evaluate(self.params, verbose=verbose)
-        self.params -= self.lr * grad
-        self.history.append((self.params.copy(), loss))
-        return grad, loss
+class History:
+    def __init__(self):
+        self._data = []  # list of (params, loss, grad)
     
-    def _make_param_range(self, center, width, num):
-        return np.linspace(center - width, center + width, num)
-
+    def append(self, params, loss, grad):
+        self._data.append((params.copy(), loss, grad))
+    
+    def save(self, filename):
+        """Save all history data to file."""
+        with self._open_file(filename) as f:
+            for params, loss, grad in self._data:
+                x = params[0]  # Assumes single parameter
+                self._write_row(f, x, loss, grad)
+    
     def _open_file(self, filename, tag=None):
         fn = filename if str(filename).endswith(".dat") else f"{filename}.dat"
         if tag:
@@ -31,90 +29,93 @@ class Optimiser:
         if not exists:
             f.write("param\tloss\treal_grad\timag_grad\tabs_grad\n")
         return f
-
+    
     def _write_row(self, f, x, loss, grad):
         L = float(np.asarray(loss).ravel()[0])
         G = complex(np.asarray(grad).ravel()[0])
         f.write(f"{x:.10e}\t{L:.10e}\t{G.real:.10e}\t{G.imag:.10e}\t{abs(G):.10e}\n")
 
-    def sweep(self, center: float = 0.199, width: float = 0.04, num: int = 21,
-              adj_rotation=None,
-              perturbation=None, verbose: bool = False, filename=None):
-        if perturbation is None:
-            perturbation = self.evaluator.param_perturbation
+import os
+import numpy as np
+from .AdjointSolver import AdjointEvaluator
 
-        param_range = self._make_param_range(center, width, num)
-        losses, grads = [], []
 
-        for x in param_range:
-            p = [x]
-            if adj_rotation: self.evaluator.adjoint_rotation = adj_rotation
+class History:
+    def __init__(self):
+        self.data = []  # list of dict: {'params': array, 'loss': float, 'grad': array}
+    
+    def append(self, params, loss, grad):
+        self.data.append({
+            'params': params.copy(),
+            'loss': float(np.real(loss)),
+            'grad': grad.copy() if grad is not None else None
+        })
+    
+    def save(self, filename):
+        """Save history to numpy file."""
+        np.savez(filename, 
+                 params=np.array([d['params'] for d in self.data]),
+                 losses=np.array([d['loss'] for d in self.data]),
+                 grads=np.array([d['grad'] for d in self.data if d['grad'] is not None]))
 
-            grad, loss = self.evaluator.evaluate(p, perturbation, verbose=verbose)
-            grads.append(grad)
-            losses.append(loss)
 
-        if filename:
-            with self._open_file(filename) as f:
-                for x, L, G in zip(param_range, losses, grads):
-                    self._write_row(f, x, L, G)
-        else: 
-            print("no filename to save data")
+class Optimiser:
+    def __init__(self, initial_params: np.ndarray, lr: float, evaluator: AdjointEvaluator):
+        self.current_params = np.asarray(initial_params, float)
+        self.lr = lr
+        self.evaluator = evaluator
+        self.history = History()
 
-        return param_range, losses, grads
+    def sweep(self, param_range: np.ndarray, perturbation_mag=None, verbose: bool = False):
+        if perturbation_mag is None:
+            perturbation_mag = self.evaluator.param_perturbation[0]
+        
+        for params in param_range:  # params can be 1D or multi-dimensional
+            grad_vec, loss = self.evaluator.evaluate(params, perturbation_mag, verbose=verbose)
+            self.history.append(params, loss, grad_vec)
+        
+        return self.history
 
-    def sweep_reusing_fields(self, center=0.199, width=0.04, num=21,
-                             angles=(0.0,),     
-                             perturbation=None, verbose=False, filename_base=None):
-        if perturbation is None:
-            perturbation = self.evaluator.param_perturbation
+    def gradient_descent(self, num_steps=50, perturbation_mag=None, verbose=False):
+        if perturbation_mag is None:
+            perturbation_mag = self.evaluator.param_perturbation[0]
 
-        param_range = self._make_param_range(center, width, num)
+        for k in range(num_steps):
+            grad_vec, loss = self.evaluator.evaluate(self.current_params, perturbation_mag, verbose=False)
+            self.current_params -= self.lr * grad_vec
+            self.history.append(self.current_params, loss, grad_vec)
+            
+            if verbose:
+                print(f"step {k}: loss={float(loss):.6e}, ||grad||={np.linalg.norm(grad_vec):.6e}")
 
-        for x in param_range:
-            p = [x]
-            fwd, adj, loss = self.evaluator.sims(p, perturbation)
-            boundary_velocity_field, reference_coord, _ = \
-                self.evaluator.parametric_designer.compute_boundary_velocity(p, perturbation)
+        return self.current_params, self.history
+
+        # Unused 
+        # def sweep_reusing_fields(self, center=0.199, width=0.04, num=21,
+        #                      angles=(0.0,),     
+        #                      perturbation=None, verbose=False, filename_base=None):
+        # if perturbation is None:
+        #     perturbation = self.evaluator.param_perturbation
+
+        # param_range = self._make_param_range(center, width, num)
+
+        # for x in param_range:
+        #     p = [x]
+        #     fwd, adj, loss = self.evaluator.sims(p, perturbation)
+        #     boundary_velocity_field, reference_coord, _ = \
+        #         self.evaluator.parametric_designer.compute_boundary_velocity(p, perturbation)
 
             
-            for ang in angles:
-                grad = -self.evaluator._calc_adjoint_forward_product(
-                    boundary_velocity_field, reference_coord,
-                    fwd, adj, ang)
-                if filename_base:
-                    tag = f"ang={float(ang):.4f}rad"
-                    with self._open_file(filename_base, tag=tag) as f:
-                        self._write_row(f, x, loss, grad)
+        #     for ang in angles:
+        #         grad = -self.evaluator._calc_adjoint_forward_product(
+        #             boundary_velocity_field, reference_coord,
+        #             fwd, adj, ang)
+        #         if filename_base:
+        #             tag = f"ang={float(ang):.4f}rad"
+        #             with self._open_file(filename_base, tag=tag) as f:
+        #                 self._write_row(f, x, loss, grad)
 
-        if verbose:
-            print(f"x={x:.6f} done")
+        # if verbose:
+        #     print(f"x={x:.6f} done")
 
-        return param_range
-
-    def gradient_descent(self, initial_param, lr=0.01, pertubation=None, num_steps=50, verbose=False):
-        # Accept the existing (misspelled) argument name; map to the internal variable used elsewhere
-        perturbation = self.evaluator.param_perturbation if pertubation is None else pertubation
-
-        # Initialise params and (optionally) learning rate for this run
-        self.params = np.asarray(initial_param, dtype=float)
-        local_lr = float(lr)
-
-        grads = []
-        losses = []
-
-        for k in range(int(num_steps)):
-            grad, loss = self.evaluator.evaluate(self.params, perturbation, verbose=False)
-           
-            self.params -= local_lr * np.array([grad.imag])
-            # Log minimal state
-            self.history.append((self.params.copy(), loss))
-            print(params)
-            grads.append(grad)
-            losses.append(loss)
-            if verbose:
-                G = complex(np.asarray(grad).ravel()[0])
-                L = float(np.asarray(loss).ravel()[0])
-                print(f"step={k:03d}  param={self.params.ravel()[0]:.10e}  loss={L:.10e}  grad={G.real:.10e}+{G.imag:.10e}j")
-
-        return np.asarray(self.params, dtype=self.params.dtype), np.array(losses), np.array(grads)
+        # return param_range
