@@ -159,9 +159,9 @@ class AdjointEvaluator:
             adjoint_rotation=self.adjoint_rotation
         )
 
-    def evaluate(self, params: np.ndarray, perturbation, verbose=False):
+    def evaluate(self, params: np.ndarray, perturbation_magnitude, verbose=False):
         """
-        Run forward + adjoint sims for given params, return (grad, loss). 
+        Run forward + adjoint sims for given param specification, return (grad, loss). 
         grad is a complex number.
         Boundary velocity version
         """
@@ -176,21 +176,30 @@ class AdjointEvaluator:
 
         adj_sparams = self._adjoint_calculation(qk_design, adjoint_strength)
 
-        inner_product = self.compute_boundary_inner_product(
-            params, perturbation, fwd_sparams, adj_sparams
-        )
+        grad_vec = np.zeros_like(params)
 
-        # For a real scalar objective, the gradient is the real part of the complex sensitivity
-        grad_complex = -inner_product
-        grad = 2.0 * np.real(grad_complex) 
+        for basis_index in range(params.shape[0]):
+            perturbation_vec = np.zeros_like(params)
+            perturbation_vec[basis_index] = perturbation_magnitude
+
+            inner_product = self.compute_boundary_inner_product(
+                params, perturbation_vec, fwd_sparams, adj_sparams
+            )
+
+            # For a real scalar objective, the gradient is the real part of the complex sensitivity
+            grad_complex = -inner_product
+            grad = 2.0 * np.real(grad_complex) 
+
+            grad_vec[basis_index] = grad
+            
         E_at_target = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', self.adjoint_source_locations)
-    
         loss = (E_at_target) @ (np.conj(E_at_target).T)
 
         if verbose:
-            print(f"Loss: {loss}Abs: {abs(grad)} Grad = {np.real(grad)} + {np.imag(grad)}j")
+            grad_norm = np.linalg.norm(grad_vec)
+            print(f"Loss: {loss:.6e}, ||grad||: {grad_norm:.6e}, grad: {grad_vec}")
 
-        return grad, loss
+        return grad_vec, loss
     
     def visualise(self, sims_params):
         field_data = self.sim_runner.eval_fields_over_mesh(sims_params)
@@ -208,13 +217,6 @@ class AdjointEvaluator:
         adj = self._adjoint_calculation(qk, self._adjoint_strength(fwd, self.adjoint_source_locations))
         loss = self.sim_runner.eval_field_at_pts(fwd, 'E', self.adjoint_source_locations)
         return fwd, adj, loss
-
-
-
-        
-        
-
-
 
 if __name__ == "__main__":
 
