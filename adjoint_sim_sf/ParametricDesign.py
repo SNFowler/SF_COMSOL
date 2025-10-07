@@ -45,6 +45,10 @@ class ParametricDesign(ABC):
         """Return boundary velocity info for a small parameter perturbation."""
         pass
 
+    @abstractmethod
+    def sample_interior_points(self, params: np.ndarray, n: int, seed=None):
+        pass
+
 
 class PolygonConstructor(ABC):
     @abstractmethod
@@ -100,6 +104,10 @@ class SymmetricTransmonDesign(ParametricDesign):
     
     def compute_boundary_velocity(self, parameters: np.ndarray, perturbation: np.ndarray):
         return self._polygon_constructor.compute_boundary_velocity(parameters, perturbation)
+    
+    def sample_interior_points(self, params: np.ndarray, n: int, seed=None):
+        """Sample n points from interior of design geometry."""
+        return self._polygon_constructor.sample_interior_points(params, n, seed)
 
 class SymmetricTransmonPolygonConstructor(PolygonConstructor):
     def __init__(self, join_style=1, quad_segs=4):
@@ -200,6 +208,27 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
             nearest_perturbed_coords.append(poly_corrs)
 
         return velocities, reference_coords, nearest_perturbed_coords
+    
+    def sample_interior_points(self, params: np.ndarray, n: int, seed=None) -> np.ndarray:
+        """
+        Sample n points uniformly from the interior of the design.
+        Returns array of shape (n, 2).
+        """
+        multipoly = self.make_polygons(params)
+        
+        # Get bounding box
+        minx, miny, maxx, maxy = multipoly.bounds
+        
+        # Sample with rejection
+        points = []
+        rng = np.random.default_rng(seed)
+        
+        while len(points) < n:
+            x = rng.uniform(minx, maxx)
+            y = rng.uniform(miny, maxy)
+            if multipoly.contains(Point(x, y)):
+                points.append([x * 1e-3, y * 1e-3])  # Convert mm to m
+        
 
 
 
