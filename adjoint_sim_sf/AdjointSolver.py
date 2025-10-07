@@ -53,13 +53,15 @@ class AdjointEvaluator:
         self.freq_value = 8.0333e9
         self.param_perturbation = np.array([1e-5])          # in mm
         self.fwd_source_strength = 1e-2
+
+        self.num_adj_sample_points = 20
         
         self.fwd_source_locations = np.array([[300e-6, 300e-6, 100e-6], [-200e-6, 400e-6, 100e-6]])  # in meters
         self.adjoint_sources = [
             Source(np.array([0, 0, 100e-6]), np.array([0, 1, 0]))
         ]
         
-        self.adjoint_source_locations = np.array([[0, 0, 100e-6]])        # in meters
+              # in meters
         self.adjoint_rotation = math.pi/2 
         self.param_to_sim_scale = 1e-3
 
@@ -118,9 +120,9 @@ class AdjointEvaluator:
         """
         match objective_type.lower():
             case "jj":
-                self.adjoint_source_locations = self.get_JJ_adjoint_sources
+                self.adjoint_sources = self.get_JJ_adjoint_sources()
             case "epr":
-                self.adjoint_source_locations = self.get_epr_adjoint_sources
+                self.adjoint_sources = self.get_epr_adjoint_sources(params, self.num_adj_sample_points)
             
 
         qk_design = self.parametric_designer.build_qk_design(params)
@@ -269,14 +271,6 @@ class AdjointEvaluator:
         plane_inds = (np.abs(z)<1e-6)
         plt.scatter(x[plane_inds], y[plane_inds], c=np.clip(np.abs(Ez[plane_inds]), 0,1e14))
 
-
-    def sims(self, params, perturbation):
-        qk = self.parametric_designer.build_qk_design(params)
-        fwd = self._fwd_calculation(qk)
-        adj = self._adjoint_calculation(qk, self._adjoint_strength(fwd, self.adjoint_source_locations))
-        loss = self.sim_runner.eval_field_at_pts(fwd, 'E', self.adjoint_source_locations)
-        return fwd, adj, loss
-
     def get_JJ_adjoint_sources(self):
         return [Source(np.array([0, 0, 100e-6]), np.array([0, 1, 0]))]
     
@@ -285,7 +279,7 @@ class AdjointEvaluator:
         Returns a random sample of points above the design region without strengths
         """
         vertical_displacement = 1e-6
-        orientation = [0,0,1]
+        orientation = np.array([0,0,1])
         points_2d = self.parametric_designer.sample_interior_points(params, n)
         
         sources = [Source(np.array([pt[0], pt[1], vertical_displacement]), orientation) for pt in points_2d]
