@@ -229,7 +229,7 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
             if multipoly.contains(Point(x, y)):
                 points.append([x * 1e-3, y * 1e-3])  # Convert mm to m
         
-
+        return np.array(points)
 
 
 
