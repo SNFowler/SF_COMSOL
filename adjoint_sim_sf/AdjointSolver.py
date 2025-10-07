@@ -1,3 +1,7 @@
+"""
+AdjointSolver.py
+"""
+
 import os
 import math
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
@@ -38,6 +42,8 @@ class AdjointEvaluator:
     @TODO: Units are not consistent between parameters, COMSOL simulation and QiskitMetal. 
     @TODO: Velocity units wrong.
     """
+
+
     def __init__(self, parametric_designer: ParametricDesign):
         if COMSOL_Model._engine is None:
             raise RuntimeError(
@@ -47,7 +53,12 @@ class AdjointEvaluator:
         self.freq_value = 8.0333e9
         self.param_perturbation = np.array([1e-5])          # in mm
         self.fwd_source_strength = 1e-2
+        
         self.fwd_source_locations = np.array([[300e-6, 300e-6, 100e-6]])  # in meters
+        self.adjoint_sources = [
+            Source(np.array([0, 0, 100e-6]), np.array([0, 1, 0]))
+        ]
+        
         self.adjoint_source_locations = np.array([[0, 0, 100e-6]])        # in meters
         self.adjoint_rotation = math.pi/2 
         self.param_to_sim_scale = 1e-3
@@ -61,27 +72,80 @@ class AdjointEvaluator:
 
         return self.sim_runner.run_forward(design, sources)
 
-    def _adjoint_calculation(self, design, adj_strength):
-        # construct source objects
-        sources = [Source(loc, np.array([0, 1, 0]), adj_strength) for loc in self.adjoint_source_locations]
+    def _adjoint_calculation(self, design, fwd_sparams):
+        str_values = self._adjoint_strength(fwd_sparams, self.adjoint_sources)
+        
+        # Create new Source objects with computed strengths
+        sources = [
+            Source(src.location, src.direction, strength)
+            for src, strength in zip(self.adjoint_sources, str_values)
+        ]
+        
         return self.sim_runner.run_adjoint(design, sources)
     
-    def _adjoint_strength(self, fwd_sparams: COMSOL_Simulation_RFsParameters, adjoint_locations: np.ndarray):
+    def _adjoint_strength(self, fwd_sparams, adjoint_sources):
         """
-        Evaluates the adjoint strength scalars at each source locations.
-
+        Evaluates the adjoint strength scalars for each source.
+        
         Args:
-            fwd_sparams: the output of the forward field simulation.
-            adjoint_locations: vector of points to evaluate the field strength at
+            fwd_sparams: Forward simulation results
+            adjoint_sources: List of Source objects (without strength set)
         """
-        raw_E_at_JJ = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', adjoint_locations)
+        locations = np.array([src.location for src in adjoint_sources])
+        directions = np.array([src.direction for src in adjoint_sources])
+        
+        raw_E = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', locations)
+        mu_0 = 1.25663706127e-7
+        
+        # Dot product: E · direction for each source
+        E_dot_direction = np.sum(raw_E * directions, axis=-1)
+        
         adj_strength = (
-            2 * np.real(raw_E_at_JJ[0, 1])
-            / (2 * np.pi * self.freq_value * 1.256637e-6)
+            2 * np.real(E_dot_direction) 
+            / (2 * np.pi * self.freq_value * mu_0)
         )
-
+        
         return adj_strength
+  
+    def evaluate(self, params: np.ndarray, perturbation_magnitude, verbose=False):
+        """
+        Run forward + adjoint sims for given param specification, return (grad, loss). 
+        grad is a complex number.
+        Boundary velocity version
+        """
+        qk_design = self.parametric_designer.build_qk_design(params)
+
+        # forward pass
+        fwd_sparams = self._fwd_calculation(qk_design)
+
+        adj_sparams = self._adjoint_calculation(qk_design, fwd_sparams)
+
+        grad_vec = np.zeros_like(params)
+
+        for basis_index in range(params.shape[0]):
+            perturbation_vec = np.zeros_like(params)
+            perturbation_vec[basis_index] = perturbation_magnitude
+
+            inner_product = self.compute_boundary_inner_product(
+                params, perturbation_vec, fwd_sparams, adj_sparams
+            )
+
+            # For a real scalar objective, the gradient is the real part of the complex sensitivity
+            grad_complex = -inner_product
+            grad = 2.0 * np.real(grad_complex) 
+
+            grad_vec[basis_index] = grad
+            
+        E_at_target = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', self.adjoint_source_locations)
+        loss = -(E_at_target) @ (np.conj(E_at_target).T)
+
+        if verbose:
+            grad_norm = np.linalg.norm(grad_vec)
+            print(f"Params: {params},Loss: {loss}, ||grad||: {grad_norm:.6e}, grad: {grad_vec}")
+
+        return grad_vec, loss
     
+      
     def save(self):
         self.sim_runner.save()
 
@@ -159,48 +223,7 @@ class AdjointEvaluator:
             adjoint_rotation=self.adjoint_rotation
         )
 
-    def evaluate(self, params: np.ndarray, perturbation_magnitude, verbose=False):
-        """
-        Run forward + adjoint sims for given param specification, return (grad, loss). 
-        grad is a complex number.
-        Boundary velocity version
-        """
-        qk_design = self.parametric_designer.build_qk_design(params)
 
-        # forward pass
-        fwd_sparams = self._fwd_calculation(qk_design)
-        
-        adjoint_strength = self._adjoint_strength(
-            fwd_sparams, self.adjoint_source_locations
-        )
-
-        adj_sparams = self._adjoint_calculation(qk_design, adjoint_strength)
-
-        grad_vec = np.zeros_like(params)
-
-        for basis_index in range(params.shape[0]):
-            perturbation_vec = np.zeros_like(params)
-            perturbation_vec[basis_index] = perturbation_magnitude
-
-            inner_product = self.compute_boundary_inner_product(
-                params, perturbation_vec, fwd_sparams, adj_sparams
-            )
-
-            # For a real scalar objective, the gradient is the real part of the complex sensitivity
-            grad_complex = -inner_product
-            grad = 2.0 * np.real(grad_complex) 
-
-            grad_vec[basis_index] = grad
-            
-        E_at_target = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', self.adjoint_source_locations)
-        loss = (E_at_target) @ (np.conj(E_at_target).T)
-
-        if verbose:
-            grad_norm = np.linalg.norm(grad_vec)
-            print(f"Loss: {loss:.6e}, ||grad||: {grad_norm:.6e}, grad: {grad_vec}")
-
-        return grad_vec, loss
-    
     def visualise(self, sims_params):
         field_data = self.sim_runner.eval_fields_over_mesh(sims_params)
         import matplotlib.pyplot as plt
