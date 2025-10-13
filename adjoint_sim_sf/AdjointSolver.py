@@ -50,7 +50,8 @@ class AdjointEvaluator:
                 "COMSOL engine not initialized. "
                 "Call COMSOL_Model.init_engine() before running simulations."
             )
-        self.freq_value = 8.0333e9
+        # self.freq_value = 8.0333e9
+        self.freq_value = 8e9
         self.param_perturbation = np.array([1e-5])          # in mm
         self.fwd_source_strength = 1e-2
 
