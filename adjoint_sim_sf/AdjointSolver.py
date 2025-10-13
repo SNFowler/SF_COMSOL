@@ -326,31 +326,3 @@ class AdjointEvaluator:
 
         return sources
 
-if __name__ == "__main__":
-
-    import matplotlib.pyplot as plt
-
-
-    from adjoint_sim_sf.ParametricDesign import SymmetricTransmonDesign
-    from SQDMetal.COMSOL.Model import COMSOL_Model
-
-    if COMSOL_Model._engine is None:
-            COMSOL_Model.init_engine()
-
-
-
-    params = np.array([.119], dtype=float)
-    perturbation = np.array([0.01], dtype=float)
-
-    # Build design and evaluator
-    parametric_designer = SymmetricTransmonDesign()
-    adjoint_evaluator = AdjointEvaluator(parametric_designer)
-    design = parametric_designer.build_qk_design(params)
-    optimiser = Optimiser(params, 0.01, adjoint_evaluator)
-
-    param_range, losses, grads = optimiser.sweep(center=0.199, width=0.04, num=15, verbose=True)
-    grads = np.array(grads)  # Convert list to array
-
-    plt.plot(param_range, np.real(grads[:, 0, 0]))
-    plt.plot(param_range, np.imag(grads[:, 0, 0]), 'y')
-    plt.show()
