@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import os
 from math import hypot
 from typing import List, Tuple
+import time
 
 import numpy as np
 
@@ -106,7 +107,7 @@ class SymmetricTransmonDesign(ParametricDesign):
         return self._polygon_constructor.compute_boundary_velocity(parameters, perturbation)
     
     def sample_interior_points(self, params: np.ndarray, n: int, seed=None):
-        """Sample n points from interior of design geometry."""
+        """Sample n points from interior of design geometry."""            
         return self._polygon_constructor.sample_interior_points(params, n, seed)
 
 class SymmetricTransmonPolygonConstructor(PolygonConstructor):
@@ -221,6 +222,8 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         
         # Sample with rejection
         points = []
+        if not seed:
+            seed = time.time_ns()
         rng = np.random.default_rng(seed)
         
         while len(points) < n:

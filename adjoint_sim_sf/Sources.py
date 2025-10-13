@@ -17,6 +17,10 @@ class Source:
 
     def __post_init__(self): 
         assert self.location.shape[0] == self.direction.shape[0]
-        
-    
+
+    def __str__(self):
+        s = "N/A" if self.strength is None else np.array2string(self.strength, precision=8)
+        loc = np.array2string(self.location, precision=8)
+        dir_ = np.array2string(self.direction, precision=8)
+        return f"Source(location={loc}, direction={dir_}, strength={s})"
 

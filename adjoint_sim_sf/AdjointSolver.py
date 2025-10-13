@@ -28,15 +28,15 @@ from SQDMetal.COMSOL.SimRFsParameter import COMSOL_Simulation_RFsParameters
 
 from SQDMetal.Utilities.ShapelyEx import ShapelyEx
 from typing import Iterable
+from dataclasses import dataclass, fields, asdict
 
 from .ParametricDesign import ParametricDesign
 from .Simulation import SimulationRunner 
 from .Sources import Source 
-
 """
 @TODO: Naming confusion. "design" in this code refers to both the qiskit design and to an instance of ParametricDesign class.
-"""
-    
+"""    
+
 class AdjointEvaluator:
     """
     @TODO: Units are not consistent between parameters, COMSOL simulation and QiskitMetal. 
@@ -44,7 +44,7 @@ class AdjointEvaluator:
     """
 
 
-    def __init__(self, parametric_designer: ParametricDesign):
+    def __init__(self, parametric_designer: ParametricDesign, config: dict = None):
         if COMSOL_Model._engine is None:
             raise RuntimeError(
                 "COMSOL engine not initialized. "
@@ -67,7 +67,46 @@ class AdjointEvaluator:
         self.param_to_sim_scale = 1e-3
 
         self.parametric_designer = parametric_designer
+        if config is not None:
+            self.update_params(config)
+
         self.sim_runner = SimulationRunner(self.freq_value)
+
+    def update_params(self, config_dict):
+        for key, value in config_dict.items():
+            if not hasattr(self, key):
+                raise AttributeError(f"AdjointEvaluator has no attribute {key}")
+            
+            def type_check(value, current_val):
+                if type(value) is not type(current_val):
+                    raise TypeError(
+                        f"Type mismatch for '{key}': expected {type(current_val).__name__}, "
+                        f"got {type(value).__name__}"
+                    )
+                if isinstance(value, list):
+                    type_check(value[0], current_val[0])
+                
+            type_check(value, getattr(self, key))
+
+            setattr(self, key, value)
+
+    def to_config_dict(self):
+        cfg = {}
+        for key, val in vars(self).items():
+            if key.startswith("_") or callable(val):
+                continue
+            if key in {"parametric_designer", "sim_runner"}:
+                continue
+
+            if isinstance(val, np.ndarray):
+                cfg[key] = val.tolist()
+            elif isinstance(val, Source):
+                cfg[key] = asdict(val)
+            elif isinstance(val, list) and val and isinstance(val[0], Source):
+                cfg[key] = [asdict(v) for v in val]
+            else:
+                cfg[key] = val
+        return cfg
 
     def _fwd_calculation(self, design):
         # construct source objects

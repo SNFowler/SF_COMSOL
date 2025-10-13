@@ -1,63 +1,55 @@
 import os
+import copy
+import numpy as np
+from .AdjointSolver import AdjointEvaluator
+import time
+import json
+
+
+import os, json, copy
 import numpy as np
 from .AdjointSolver import AdjointEvaluator
 
-
 class History:
-    def __init__(self):
-        self._data = []  # list of (params, loss, grad)
-    
-    def append(self, params, loss, grad):
-        self._data.append((params.copy(), loss, grad))
-    
+    def __init__(self, source_file=None):
+        self._data = []
+        if source_file:
+            self._read_in(source_file)
+
+    @staticmethod
+    def _coerce_json(x):
+        if isinstance(x, np.ndarray): return x.tolist()
+        if isinstance(x, np.generic): return x.item()
+        # keep it simple: no special complex handling for now
+        return x
+
+    def _time(self):
+        return time.datetime.now(time.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
+
+    def append(self, my_dict):
+        new_dict = copy.deepcopy(my_dict)
+        if "ts" not in new_dict:
+            new_dict["ts"] = self._time
+        self._data.append()
+
     def save(self, filename):
-        """Save all history data to file."""
-        with self._open_file(filename) as f:
-            for params, loss, grad in self._data:
-                x = params[0]  # Assumes single parameter
-                self._write_row(f, x, loss, grad)
-    
-    def _open_file(self, filename, tag=None):
-        fn = filename if str(filename).endswith(".dat") else f"{filename}.dat"
-        if tag:
-            fn = os.path.join(filename, f"{tag}.dat")
-        d = os.path.dirname(fn)
-        if d:
-            os.makedirs(d, exist_ok=True)
-        exists = os.path.exists(fn)
-        f = open(fn, "a" if exists else "w")
-        if not exists:
-            f.write("param\tloss\treal_grad\timag_grad\tabs_grad\n")
-        return f
-    
-    def _write_row(self, f, x, loss, grad):
-        L = float(np.asarray(loss).ravel()[0])
-        G = complex(np.asarray(grad).ravel()[0])
-        f.write(f"{x:.10e}\t{L:.10e}\t{G.real:.10e}\t{G.imag:.10e}\t{abs(G):.10e}\n")
+        """Append records to a .jsonl (one JSON object per line)."""
+        path = filename if str(filename).endswith(".jsonl") else f"{filename}.jsonl"
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "a") as f:  # 'a' = append-only log
+            for rec in self._data:
+                out = {k: self._coerce_json(v) for k, v in rec.items()}
+                f.write(json.dumps(out, separators=(",", ":")) + "\n")
 
-import os
-import numpy as np
-from .AdjointSolver import AdjointEvaluator
-
-
-class History:
-    def __init__(self):
-        self.data = []  # list of dict: {'params': array, 'loss': float, 'grad': array}
-    
-    def append(self, params, loss, grad):
-        self.data.append({
-            'params': params.copy(),
-            'loss': float(np.real(loss)),
-            'grad': grad.copy() if grad is not None else None
-        })
-    
-    def save(self, filename):
-        """Save history to numpy file."""
-        np.savez(filename, 
-                 params=np.array([d['params'] for d in self.data]),
-                 losses=np.array([d['loss'] for d in self.data]),
-                 grads=np.array([d['grad'] for d in self.data if d['grad'] is not None]))
-
+    def _read_in(self, filename):
+        """Load records from a .jsonl file (replace current _data)."""
+        path = filename if str(filename).endswith(".jsonl") else f"{filename}.jsonl"
+        self._data.clear()
+        with open(path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    self._data.append(json.loads(line))
 
 class Optimiser:
     def __init__(self, initial_params: np.ndarray, lr: float, evaluator: AdjointEvaluator):
@@ -69,25 +61,20 @@ class Optimiser:
     def sweep(self, param_range: np.ndarray, perturbation_mag=None, verbose: bool = False):
         if perturbation_mag is None:
             perturbation_mag = self.evaluator.param_perturbation[0]
-        
-        for params in param_range:  # params can be 1D or multi-dimensional
-            grad_vec, loss = self.evaluator.evaluate(params, perturbation_mag, verbose=verbose)
-            self.history.append(params, loss, grad_vec)
-        
+        for params in param_range:
+            grad, loss = self.evaluator.evaluate(params, perturbation_mag, verbose=verbose)
+            self.history.append({"params": np.asarray(params, float), "loss": float(loss), "grad": np.asarray(grad, float)})
         return self.history
 
     def gradient_descent(self, num_steps=50, perturbation_mag=None, verbose=False):
         if perturbation_mag is None:
             perturbation_mag = self.evaluator.param_perturbation[0]
-
         for k in range(num_steps):
-            grad_vec, loss = self.evaluator.evaluate(self.current_params, perturbation_mag, verbose=False)
-            self.current_params -= self.lr * grad_vec
-            self.history.append(self.current_params, loss, grad_vec)
-            
+            grad, loss = self.evaluator.evaluate(self.current_params, perturbation_mag, verbose=False)
+            self.current_params = self.current_params - self.lr * grad
+            self.history.append({"params": np.asarray(self.current_params, float), "loss": float(loss), "grad": np.asarray(grad, float)})
             if verbose:
-                print(f"step {k}: loss={float(loss):.6e}, ||grad||={np.linalg.norm(grad_vec):.6e}")
-
+                print(f"step {k}: loss={float(loss):.6e}, ||grad||={np.linalg.norm(grad):.6e}")
         return self.current_params, self.history
 
         # Unused 
