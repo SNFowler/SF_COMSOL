@@ -50,6 +50,9 @@ class AdjointEvaluator:
                 "COMSOL engine not initialized. "
                 "Call COMSOL_Model.init_engine() before running simulations."
             )
+        
+        self.random_seed = None
+
         # self.freq_value = 8.0333e9
         self.freq_value = 8e9
         self.param_perturbation = np.array([1e-5])          # in mm
@@ -58,9 +61,10 @@ class AdjointEvaluator:
         self.num_adj_sample_points = 20
         
         self.fwd_source_locations = np.array([[300e-6, 300e-6, 100e-6], [-200e-6, 400e-6, 100e-6]])  # in meters
-        self.adjoint_sources = [
+        self.jj_adjoint_sources = [
             Source(np.array([0, 0, 100e-6]), np.array([0, 1, 0]))
         ]
+        
         
               # in meters
         self.adjoint_rotation = math.pi/2 
@@ -72,42 +76,6 @@ class AdjointEvaluator:
 
         self.sim_runner = SimulationRunner(self.freq_value)
 
-    def update_params(self, config_dict):
-        for key, value in config_dict.items():
-            if not hasattr(self, key):
-                raise AttributeError(f"AdjointEvaluator has no attribute {key}")
-            
-            def type_check(value, current_val):
-                if type(value) is not type(current_val):
-                    raise TypeError(
-                        f"Type mismatch for '{key}': expected {type(current_val).__name__}, "
-                        f"got {type(value).__name__}"
-                    )
-                if isinstance(value, list):
-                    type_check(value[0], current_val[0])
-                
-            type_check(value, getattr(self, key))
-
-            setattr(self, key, value)
-
-    def to_config_dict(self):
-        cfg = {}
-        for key, val in vars(self).items():
-            if key.startswith("_") or callable(val):
-                continue
-            if key in {"parametric_designer", "sim_runner"}:
-                continue
-
-            if isinstance(val, np.ndarray):
-                cfg[key] = val.tolist()
-            elif isinstance(val, Source):
-                cfg[key] = asdict(val)
-            elif isinstance(val, list) and val and isinstance(val[0], Source):
-                cfg[key] = [asdict(v) for v in val]
-            else:
-                cfg[key] = val
-        return cfg
-
     def _fwd_calculation(self, design):
         # construct source objects
         sources = [Source(loc, np.array([0, 1, 0]), self.fwd_source_strength) for loc in self.fwd_source_locations]
@@ -115,12 +83,12 @@ class AdjointEvaluator:
         return self.sim_runner.run_forward(design, sources)
 
     def _adjoint_calculation(self, design, fwd_sparams):
-        str_values = self._adjoint_strength(fwd_sparams, self.adjoint_sources)
+        str_values = self._adjoint_strength(fwd_sparams, self.jj_adjoint_sources)
         
         # Create new Source objects with computed strengths
         sources = [
             Source(src.location, src.direction, strength)
-            for src, strength in zip(self.adjoint_sources, str_values)
+            for src, strength in zip(self.jj_adjoint_sources, str_values)
         ]
         
         return self.sim_runner.run_adjoint(design, sources)
@@ -160,9 +128,9 @@ class AdjointEvaluator:
         """
         match objective_type.lower():
             case "jj":
-                self.adjoint_sources = self.get_JJ_adjoint_sources()
+                self.jj_adjoint_sources = self.get_JJ_adjoint_sources()
             case "epr":
-                self.adjoint_sources = self.get_epr_adjoint_sources(params, self.num_adj_sample_points)
+                self.jj_adjoint_sources = self.get_epr_adjoint_sources(params, self.num_adj_sample_points, seed = self.random_seed)
             
 
         qk_design = self.parametric_designer.build_qk_design(params)
@@ -190,12 +158,12 @@ class AdjointEvaluator:
 
             grad_vec[basis_index] = grad
         
-        locations = np.array([src.location for src in self.adjoint_sources])
+        locations = np.array([src.location for src in self.jj_adjoint_sources])
         E_at_targets = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', locations)
 
         loss = 0
         #extract the relevant loss 
-        directions = np.array([src.direction for src in self.adjoint_sources])
+        directions = np.array([src.direction for src in self.jj_adjoint_sources])
         E_projected = np.sum(E_at_targets * directions, axis=-1)  # [n_sources]
         loss = -np.sum(np.abs(E_projected)**2)
 
@@ -207,23 +175,29 @@ class AdjointEvaluator:
     
     def evaluate_multi_objective(self, params, perturbation_magnitude, 
                                 w_jj=0.5, w_epr=0.5):
-       # Run forward sim once
-       qk_design = self.parametric_designer.build_qk_design(params)
-       fwd_sparams = self._fwd_calculation(qk_design)
+        # Run forward sim once
+        qk_design = self.parametric_designer.build_qk_design(params)
+        fwd_sparams = self._fwd_calculation(qk_design)
        
-       # JJ objective
-       grad_jj, loss_jj = self.evaluate(params, perturbation_magnitude, 
-                                        fwd_sparams=fwd_sparams)
+        grad_jj, loss_jj = 0, 0 
+        grad_epr, loss_epr= 0, 0
+        # JJ objective
+        if w_jj > 0:
+            grad_jj, loss_jj = self.evaluate(params, perturbation_magnitude, 
+                                                fwd_sparams=fwd_sparams)
        
-       # EPR objective (need to modify evaluate() first)
-       grad_epr, loss_epr = self.evaluate_epr(params, perturbation_magnitude,
-                                               fwd_sparams=fwd_sparams, n_samples=20)
-       
-       # Combine
-       total_grad = w_jj * grad_jj + w_epr * grad_epr
-       total_loss = w_jj * loss_jj + w_epr * loss_epr
-       
-       return total_grad, total_loss, (loss_jj, loss_epr)
+        
+        
+        # EPR objective 
+        if w_epr > 0:
+            grad_epr, loss_epr = self.evaluate(params, perturbation_magnitude,
+                                                    fwd_sparams=fwd_sparams, objective_type="epr")
+        
+        # Combine
+        total_grad = w_jj * grad_jj + w_epr * grad_epr
+        total_loss = w_jj * loss_jj + w_epr * loss_epr
+        
+        return total_grad, total_loss, (loss_jj, loss_epr), (grad_jj, grad_epr)
 
     def save(self):
         self.sim_runner.save()
@@ -312,17 +286,45 @@ class AdjointEvaluator:
         plt.scatter(x[plane_inds], y[plane_inds], c=np.clip(np.abs(Ez[plane_inds]), 0,1e14))
 
     def get_JJ_adjoint_sources(self):
-        return [Source(np.array([0, 0, 100e-6]), np.array([0, 1, 0]))]
+        return self.jj_adjoint_sources
     
-    def get_epr_adjoint_sources(self, params, n):
+    def get_epr_adjoint_sources(self, params, n, seed=None):
         """
         Returns a random sample of points above the design region without strengths
         """
         vertical_displacement = 1e-6
         orientation = np.array([0,0,1])
-        points_2d = self.parametric_designer.sample_interior_points(params, n)
+        points_2d = self.parametric_designer.sample_interior_points(params, n, seed=seed)
         
         sources = [Source(np.array([pt[0], pt[1], vertical_displacement]), orientation) for pt in points_2d]
 
         return sources
+    
+    def update_params(self, config_dict):
+        for k, v in config_dict.items():
+            if not hasattr(self, k):
+                raise AttributeError(f"AdjointEvaluator has no attribute {k}")
+            if isinstance(v, list):
+                v = np.array(v)
+            setattr(self, k, v)
+
+
+    def to_config_dict(self):
+        cfg = {}
+        for key, val in vars(self).items():
+            if key.startswith("_") or callable(val):
+                continue
+            if key in {"parametric_designer", "sim_runner"}:
+                continue
+
+            if isinstance(val, np.ndarray):
+                cfg[key] = val.tolist()
+            elif isinstance(val, Source):
+                cfg[key] = asdict(val)
+            elif isinstance(val, list) and val and isinstance(val[0], Source):
+                cfg[key] = [asdict(v) for v in val]
+            else:
+                cfg[key] = val
+        return cfg
+
 
