@@ -7,7 +7,10 @@ env_check/*.vschode/
 adjoint_sim_sf/__pycache__
 scrap_notebooks/
 
-notebooks/
+notebooks/*
+!notebooks/**/*.ipynb
+!notebooks/*.ipynb
+
 .history/
 *.mph
 *.mph.*
