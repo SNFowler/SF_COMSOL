@@ -1,5 +1,6 @@
 # test_experiment_history.py
 import json
+import os
 import numpy as np
 from adjoint_sim_sf import Experiment, Optimiser, AdjointEvaluator
 
