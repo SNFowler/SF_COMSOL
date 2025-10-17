@@ -51,7 +51,7 @@ class SimulationRunner:
         return coords * scale
 
 
-    def _run_sim(self, name, design, sources: List[Source]):
+    def _run_sim(self, name, design, sources: List[Source], save = False):
         """Internal method to set up and run a COMSOL simulation."""
         cmsl = COMSOL_Model(name)
         sim = COMSOL_Simulation_RFsParameters(cmsl, adaptive='None')
@@ -77,4 +77,8 @@ class SimulationRunner:
         
         self.latest_cmsl = cmsl
         self.latest_sim = sim
+        if save:
+            filename = datetime.now().strftime("%Y%m%d-%f") + ".mph"
+            cmsl.save("C:\\Users\\Experiment\\OneDrive - The University of Queensland\\Desktop\\SF_COMSOL\\adjoint_sim_sf\\comsol_output\\" + filename)
+            print("Saved ", filename)
         return sim
