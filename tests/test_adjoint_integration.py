@@ -92,9 +92,17 @@ def test_evaluate_epr(params, single_perturbation, adjoint_evaluator, fwd_sparam
     assert grad is not None and grad.shape == params.shape and np.isfinite(grad).all()
     assert loss is not None and np.isfinite(loss)
 
-def test_sample_interior_points(params, parametric_designer):
+def test_sample_MA_points(params, parametric_designer):
     """Test that sampled points are generated."""
-    points = parametric_designer.sample_interior_points(params, n=10, seed=42)
+    points = parametric_designer.sample_MA_points(params, n=10, seed=42)
     
     assert points.shape == (10, 2)
     assert np.isfinite(points).all()
+
+def test_sample_SA_points(params, parametric_designer):
+    """Test that sampled points are generated."""
+    points = parametric_designer.sample_MA_points(params, n=10, seed=42)
+    
+    assert points.shape == (10, 2)
+    assert np.isfinite(points).all()
+
