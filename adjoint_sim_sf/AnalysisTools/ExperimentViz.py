@@ -43,12 +43,12 @@ class Plotter:
                 -numeric_gradients[idx, 1],
                 alpha=0.6,
                 scale=quiver_scale,
-                scale_units='xy',  # Add this
-                angles='xy',       # Add this
+                scale_units='xy', 
+                angles='xy',      
                 width=quiver_width,
-                headwidth=3,       # Add this - controls arrowhead width
-                headlength=5,      # Add this - controls arrowhead length
-                headaxislength=4.5, # Add this - controls arrowhead shape
+                headwidth=3,       
+                headlength=5,      
+                headaxislength=4.5, 
                 label="Numeric grad",
             )
 
@@ -110,8 +110,13 @@ class Plotter:
             min_val = min(num_mag.min(), (adj_mag * scale).min())
             ax.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect agreement', alpha=0.7)
 
-        ax.set_xlabel("Numerical Gradient Magnitude", fontsize=12)
-        ax.set_ylabel("Adjoint Gradient Magnitude", fontsize=12)
+        if uselog:
+            ax.set_xlabel("Numerical Gradient Log Magnitude", fontsize=12)
+            ax.set_ylabel("Adjoint Gradient Log Magnitude", fontsize=12)
+        else:
+            ax.set_xlabel("Numerical Gradient Magnitude", fontsize=12)
+            ax.set_ylabel("Adjoint Gradient Magnitude", fontsize=12)
+            
         ax.set_title(title or "Gradient Magnitude Comparison", fontsize=14)
         ax.legend(fontsize=11)
         ax.grid(True, alpha=0.3)
