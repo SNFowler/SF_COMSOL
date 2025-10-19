@@ -28,23 +28,17 @@ class Optimiser:
             perturbation_mag = self.evaluator.param_perturbation[0]
         
         assert w_jj >= 0 and w_jj <= 1
-        w_epr = 1 - w_jj
+        w_sa = 1 - w_jj
 
         results = []
         for params in param_range:
-            total_grad, total_loss, (loss_jj, loss_epr), (grad_jj, grad_epr) = self.evaluator.evaluate_multi_objective(params, 
-                                                                 perturbation_mag, 
-                                                                 w_jj=w_jj, 
-                                                                 w_epr=w_epr)
-            results.append({
-                "params": np.asarray(params, float),
-                "loss": float(total_loss),
-                "grad": np.asarray(total_grad, float),
-                "loss_jj": loss_jj,
-                "loss_epr": loss_epr,
-                "grad_jj": grad_jj,
-                "grad_epr": grad_epr
-            })
+            current_results = self.evaluator.evaluate_multi_objective(
+                                params,
+                                perturbation_mag,
+                                w_jj=w_jj,
+                                w_sa=w_sa)
+            
+            results.append(current_results)
         return results
     
     def gradient_descent(self, num_steps=50, perturbation_mag=None, verbose=False):

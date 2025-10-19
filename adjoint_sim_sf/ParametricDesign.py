@@ -11,7 +11,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
 import shapely
-from shapely.geometry import MultiPolygon, Point, Polygon, box
+from shapely.geometry import MultiPolygon, Point, Polygon, box, LineString
 from shapely.ops import nearest_points
 from shapely.plotting import plot_polygon
 
@@ -131,14 +131,15 @@ class SymmetricTransmonDesign(ParametricDesign):
             refs_m - points on the original boundary associated with each velocity
             near_m - points on the new boundary associated with each velocity, used for plotting.
         """
-        vels, refs_mm, near_mm = self._polygon_constructor.compute_boundary_velocity(parameters, perturbation)
+        vels, refs_mm, near_mm, ds_mm = self._polygon_constructor.compute_boundary_velocity(parameters, perturbation)
+        ds_m = ds_mm * self.M_PER_MM
 
         # A bit confusing, but the boundary 'velocities' are dimensionless (they are a linear distance per another change in distance.)
         # So we only change the coordinates for the reference point and nearest point. 
         refs_m = [[[ (x*self.M_PER_MM, y*self.M_PER_MM) for (x,y) in ring ] for ring in poly] for poly in refs_mm]
         near_m = [[[ (x*self.M_PER_MM, y*self.M_PER_MM) for (x,y) in ring ] for ring in poly] for poly in near_mm]
 
-        return vels, refs_m, near_m
+        return vels, refs_m, near_m, ds_m
 
         
     def sample_MA_points(self, params: np.ndarray, n: int, seed=None):
@@ -206,6 +207,8 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
 
         #check nothing it ouside the minx, maxx, miny, maxy bounds above
 
+        
+
         return shapely.MultiPolygon([poly1, poly2])
     
     def show_polygons(self, parameters) -> Figure:
@@ -224,7 +227,7 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         return fig
 
     
-    def compute_boundary_velocity(self, params: np.ndarray, perturbation_vec: np.ndarray):
+    def compute_boundary_velocity(self, params: np.ndarray, perturbation_vec: np.ndarray, ds: float = 1e-3) -> Tuple:
         reference = self.make_polygons(params)              # mm
         perturbed = self.make_polygons(params + perturbation_vec)
         epsilon = np.linalg.norm(perturbation_vec)          # in same param units (mm)
@@ -236,7 +239,11 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
 
         velocities, reference_coords, nearest_perturbed_coords = [], [], []
 
+        polycount = 0 # just for throwing a warning
+
         for poly in polys:
+            polycount += 1
+            poly.segmentize(ds)
             rings = [poly.exterior] + list(poly.interiors)
 
             poly_vels, poly_refs, poly_corrs = [], [], []
@@ -271,7 +278,13 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
             reference_coords.append(poly_refs)
             nearest_perturbed_coords.append(poly_corrs)
 
-        return velocities, reference_coords, nearest_perturbed_coords
+        if polycount >= 3:
+            # shapely.segmetise only guarantees that all the segments are the same size and at *most* ds. 
+            # The exact segment lengths may vary for many polygons.
+            # TODO: Fix this or find some clever way so that it doesn't matter.
+            print(f"Warning: ds spacing for boundary velocity may be inconsistent for 2+ polygons. Found {polycount} polygons.")
+
+        return velocities, reference_coords, nearest_perturbed_coords, ds
 
     
     def sample_interior_points(self, params: np.ndarray, n: int, seed=None) -> np.ndarray:

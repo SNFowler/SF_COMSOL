@@ -4,6 +4,7 @@ AdjointSolver.py
 
 import os
 import math
+import time
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 os.environ["PMIX_MCA_gds"]="hash"
 
@@ -35,7 +36,6 @@ from .Simulation import SimulationRunner
 from .Sources import Source 
 """
 @TODO: Naming confusion. "design" in this code refers to both the qiskit design and to an instance of ParametricDesign class.
-@TODO: Account for shifting boundary when evaluating 
 @TODO: Account for changes in loss directly due to design parameters.
 """    
 
@@ -46,6 +46,10 @@ class AdjointEvaluator:
                 "COMSOL engine not initialized. "
                 "Call COMSOL_Model.init_engine() before running simulations."
             )
+        
+        # debugging states
+        self.verbose = True
+        self.print_timing = True
         
         self.random_seed = None
 
@@ -81,8 +85,15 @@ class AdjointEvaluator:
     def _fwd_calculation(self, design):
         # construct source objects
         sources = [Source(loc, np.array([0, 1, 0]), self.fwd_source_strength) for loc in self.fwd_source_locations]
+        
 
-        return self.sim_runner.run_forward(design, sources)
+        starttime = time.time()
+        res = self.sim_runner.run_forward(design, sources)
+        endtime = time.time()
+
+        if self.print_timing: print(f"forward sim time : {endtime - starttime:.6f}")
+
+        return res
 
     def _adjoint_calculation(self, design, fwd_sparams):
         str_values = self._adjoint_strength(fwd_sparams, self.current_adjoint_sources)
@@ -92,6 +103,11 @@ class AdjointEvaluator:
             Source(src.location, src.direction, strength)
             for src, strength in zip(self.current_adjoint_sources, str_values)
         ]
+
+        starttime = time.time()
+        res = self.sim_runner.run_adjoint(design, sources)
+        endtime = time.time()
+        if self.print_timing:  print(f"adjoint sim time : {endtime - starttime:.6f}")
         
         return self.sim_runner.run_adjoint(design, sources)
     
@@ -119,110 +135,167 @@ class AdjointEvaluator:
         
         return adj_strength
   
-    def evaluate(self, params: np.ndarray, perturbation_magnitude, 
-                 verbose=True,
-                 objective_type: str = "jj",
-                 fwd_sparams = None, adj_sparams = None): #optional for testing
-        """
-        Run forward + adjoint sims for given param specification, return (grad, loss). 
-        grad is a complex number.
-        Boundary velocity version
-
-        @TODO Right now 
-        """
-        match objective_type.lower():
-            case "jj":
-                self.current_adjoint_sources = self.get_JJ_adjoint_sources()
-            case "epr":
-                self.current_adjoint_sources = self.get_epr_adjoint_sources(params, self.num_adj_sample_points, seed = self.random_seed)
-            case "manual":
-                pass # used for testing, leaves sources unchanged. 
-            case _:
-                raise ValueError(f"Invalid objective type: {objective_type}")
-
-        if verbose:
-            print(f"{objective_type}: {self.current_adjoint_sources}")
-
+    def evaluate(self, params, perturbation_magnitude, verbose=True, 
+             objective_type="jj", fwd_sparams=None, adj_sparams=None):
+        """Evaluate the gradient and loss at given params."""
+    
+        # Get objective-specific info
+        sources, norm_area = self._get_objective_info(params, objective_type)
+        self.current_adjoint_sources = sources
+        
+        # Everything else is the same for all objectives
         qk_design = self.parametric_designer.build_qk_design(params)
-
-        # forward pass
+        
         if fwd_sparams is None:
+            
             fwd_sparams = self._fwd_calculation(qk_design)
-
+            
+            
         if adj_sparams is None:
             adj_sparams = self._adjoint_calculation(qk_design, fwd_sparams)
-
-        grad_vec = np.zeros_like(params)
-
-        for basis_index in range(params.shape[0]):
-            perturbation_vec = np.zeros_like(params)
-            perturbation_vec[basis_index] = perturbation_magnitude
-
-            inner_product = self.compute_boundary_inner_product(
-                params, perturbation_vec, fwd_sparams, adj_sparams
-            )
-
-            # For a real scalar objective, the gradient is the real part of the complex sensitivity
-            grad_complex = -inner_product
-            grad = 2.0 * np.real(grad_complex) 
-
-            grad_vec[basis_index] = grad
         
-        locations = np.array([src.location for src in self.current_adjoint_sources])
-        E_at_targets = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', locations)
+        # Compute gradient and loss (shared for all)
+        starttime = time.time()
+        grad_vec, loss = self._compute_loss_and_gradient(
+            params, perturbation_magnitude, sources, 
+            fwd_sparams, adj_sparams, norm_area
+        )
+        
+        endtime = time.time()
 
-        loss = 0
-        #extract the relevant loss 
-        directions = np.array([src.direction for src in self.current_adjoint_sources])
-        E_projected = np.sum(E_at_targets * directions, axis=-1)  # [n_sources]
-        loss = -np.sum(np.abs(E_projected)**2)
-
+        if self.print_timing:  print(f"inner product time : {endtime - starttime:.6f}")     
         if verbose:
-            grad_norm = np.linalg.norm(grad_vec)
-            print(f"Params: {params},Loss: {loss}, ||grad||: {grad_norm:.6e}, grad: {grad_vec}")
-
+            print(f"{objective_type}: {len(sources)} sources, loss={loss:.3e}")
+        
         return grad_vec, loss
     
     def evaluate_multi_objective(self, params, perturbation_magnitude, 
-                                w_jj=0.5, w_epr=0.5,
+                                w_jj=0.5, 
+                                w_sa=0.5, 
+                                w_ma=0.0,
                                 verbose = True):
         # Run forward sim once
         qk_design = self.parametric_designer.build_qk_design(params)
         fwd_sparams = self._fwd_calculation(qk_design)
-       
+
+
+        grad_jj = grad_sa = grad_ma = np.zeros_like(params)
+        loss_jj = loss_sa = loss_ma = 0.0
 
         
-        grad_jj, loss_jj = 0, 0 
-        grad_epr, loss_epr= 0, 0
         # JJ objective
         if w_jj > 0:
             grad_jj, loss_jj = self.evaluate(params, perturbation_magnitude, 
                                                 fwd_sparams=fwd_sparams)
        
+        # SA objective 
+        if w_sa > 0:
+            grad_sa, loss_sa = self.evaluate(params, perturbation_magnitude,
+                                                    fwd_sparams=fwd_sparams, objective_type="sa")
         
-        
-        # EPR objective 
-        if w_epr > 0:
-            grad_epr, loss_epr = self.evaluate(params, perturbation_magnitude,
-                                                    fwd_sparams=fwd_sparams, objective_type="epr")
+        # MA objective, if used
+        if w_ma > 0:
+            grad_ma, loss_ma = self.evaluate(params, perturbation_magnitude,
+                                                    fwd_sparams=fwd_sparams, objective_type="ma")
         
         # Combine
-        total_grad = w_jj * grad_jj + w_epr * grad_epr
-        total_loss = w_jj * loss_jj + w_epr * loss_epr
-        
-        
-        return total_grad, total_loss, (loss_jj, loss_epr), (grad_jj, grad_epr)
+        total_grad = w_jj * grad_jj + w_sa * grad_sa + w_ma * grad_ma
+        total_loss = w_jj * loss_jj + w_sa * loss_sa + w_ma * loss_ma
 
-    def save(self):
-        self.sim_runner.save()
+        #@TODO: Add scaling normalisation to epr objective.
+       
+        current_results = {
+            "params": np.asarray(params, float),
+            "loss": float(total_loss),
+            "grad": np.asarray(total_grad, float),
+            "loss_jj": loss_jj,
+            "loss_sa": loss_sa,
+            "loss_ma": loss_ma,
+            "grad_jj": grad_jj,
+            "grad_sa": grad_sa,
+            "grad_ma": grad_ma
+        }
 
-    def _calc_Ap(self, current_param, fwd_field_data, perturbation):
-        """
-        WIP: In the future will facilitate non-boundary velocity methods
-        """
-        raise NotImplementedError
+        
+        return current_results
     
+    def _compute_loss_and_gradient(self, params, perturbation_magnitude, 
+                               adjoint_sources, fwd_sparams, adj_sparams,
+                               integral_area=None):
+        """
+        Core gradient/loss computation given sources.
+
+        Currently ignores pure design parameter dependence of loss, i.e. penalising large values of theta directly.
+
+        \frac{dL}{d\theta} &= 
+            \frac{\partial \mathcal{L}}{\partial \theta} + # assumed zero for now
+          + \int_{\partial \Omega} \textit{some constants} \quad u(s) \mathbf{v}^\dagger \mathbf{E}\quad ds +
+          + \int_{\partial \Omega} u(s) \mathbf{E_z}^\dagger \mathbf{E_z}\quad ds
+        
+        Args:
+            normalization_area: Optional area for loss scaling (e.g., MA or SA surface area)
+        """
+        grad_vec = np.zeros_like(params)
+
+        # --- Gradient Calculation ---
+        # TODO: Can be made vastly more efficient by computing the adjoint and E field inner product as a scalar field,
+        #       then integrating over the boundary with the velocity field. 
+        #       Likewise, computing the |E_z|^2 field as a scalar field also.
+
+
+        #  Part 1 - Adjoint method
+        # \int_{\partial \Omega} \textit{some constants} \quad u(s) \mathbf{v}^\dagger \mathbf{E}\quad ds 
+        for basis_index in range(params.shape[0]):
+            perturbation_vec = np.zeros_like(params)
+            perturbation_vec[basis_index] = perturbation_magnitude
+            
+            #TODO: Compute multiple inner products at once for efficiency.
+            inner_product = self.compute_boundary_inner_product(
+                params, perturbation_vec, fwd_sparams, adj_sparams
+            )
+            
+            grad_complex = -inner_product
+            grad = 2.0 * np.real(grad_complex)
+            grad_vec[basis_index] = grad
+
+        # Part 2 - Reynolds Transport Component
+        # \int_{\partial \Omega} u(s) \mathbf{E_z}^\dagger \mathbf{E_z}\quad ds
+        for basis_index in range(params.shape[0]):
+            perturbation_vec = np.zeros_like(params)
+            perturbation_vec[basis_index] = perturbation_magnitude
+
+            boundary_velocity_field, reference_coord, _, ds = self.parametric_designer.compute_boundary_velocity(params, perturbation_vec)
+
+        
+
+        # --- Loss Calculation ---
+        
+        loss = self.compute_loss(params, fwd_sparams)
+        
+        # Multiply by area
+        if integral_area is not None:
+            loss = loss * integral_area
+        
+        return grad_vec, loss
     
+    def compute_loss(self, params, fwd_sparams=None):
+        """Compute only the loss at given params."""
+        qk_design = self.parametric_designer.build_qk_design(params)
+        
+        if fwd_sparams is None:
+            fwd_sparams = self._fwd_calculation(qk_design)
+        
+        # Compute loss
+        locations = np.array([src.location for src in self.current_adjoint_sources])
+        directions = np.array([src.direction for src in self.current_adjoint_sources])
+        E_at_targets = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', locations)
+        E_projected = np.sum(E_at_targets * directions, axis=-1)
+        
+        loss = -np.sum(np.abs(E_projected)**2)
+        
+        return loss
+    
+   
 
 
     def _calc_adjoint_forward_product(self, 
@@ -257,17 +330,19 @@ class AdjointEvaluator:
 
         phase = np.exp(1j * float(adjoint_rotation))
 
+        if self.print_timing: start_inner_time = time.time()
         for v, (r1, r2) in zip(flat_boundary_velocity_field, flat_reference_coord):
             # complete the forward and adjoint vectors. Note that the adjoint vector is actually the complex conjugate (but not the transpose) of the expected adjoint vector.
 
-            local_fwd_vec =     self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', [[r1, r2, r3]])
-            local_adj_vec_conj =     self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
+            local_fwd_vec =         self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', [[r1, r2, r3]])
+            local_adj_vec_conj =    self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
             
             local_adj_vec_conj = local_adj_vec_conj * phase
 
             # Taking the inner product. Note the vectors are intially in row form. 
             running_sum += v*(local_adj_vec_conj@local_fwd_vec.T)*dr
 
+        if self.print_timing: end_inner_time = time.time(); print(f"inner product loop time : {end_inner_time - start_inner_time:.6f}")
         return running_sum 
 
     def compute_boundary_inner_product(self, params, perturbation, fwd_sparams, adj_sparams):
@@ -283,7 +358,7 @@ class AdjointEvaluator:
         Returns:
             Complex-valued inner product
         """
-        boundary_velocity_field, reference_coord, _ = \
+        boundary_velocity_field, reference_coord, _, ds = \
             self.parametric_designer.compute_boundary_velocity(params, perturbation)
         
         return self._calc_adjoint_forward_product(
@@ -291,6 +366,44 @@ class AdjointEvaluator:
             fwd_sparams, adj_sparams, 
             adjoint_rotation=self.adjoint_rotation
         )
+    
+    def _get_objective_info(self, params, objective_type):
+        """Returns (sources, normalization_area) for the objective"""
+        
+        match objective_type.lower():
+            case "jj":
+                sources = self.get_JJ_adjoint_sources()
+                area = None
+            
+            case "sa":
+                sources = self.get_epr_adjoint_sources(params, self.num_adj_sample_points, 
+                                                    interface="SA", seed=self.random_seed)
+                area = self._get_silicon_area(params)
+            
+            case "ma":
+                sources = self.get_epr_adjoint_sources(params, self.num_adj_sample_points,
+                                                    interface="MA", seed=self.random_seed)
+                area = self._get_metal_area(params)
+            
+            case "manual":
+                sources = self.current_adjoint_sources  # Already set
+                area = None
+            
+            case _:
+                raise ValueError(f"Unknown objective: {objective_type}")
+    
+        return sources, area
+
+    def save(self):
+        self.sim_runner.save()
+
+    def _calc_Ap(self, current_param, fwd_field_data, perturbation):
+        """
+        WIP: In the future will facilitate non-boundary velocity methods
+        """
+        raise NotImplementedError
+    
+    
 
 
     def visualise(self, sims_params):
@@ -333,7 +446,7 @@ class AdjointEvaluator:
     
     def _get_metal_area(self, params: np.ndarray) -> float:
         """
-        Area of the pad geometry
+        Area of the pad geometry.Does not include the metal square surrounding the design region.
         """
         area_m2 = self.parametric_designer.get_interior_area(params)
 
