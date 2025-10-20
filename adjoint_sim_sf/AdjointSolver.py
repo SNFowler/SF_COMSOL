@@ -49,11 +49,13 @@ class AdjointEvaluator:
         
         # debugging states
         self.verbose = True
-        self.print_timing = True
+        self.print_timing = False
         
         self.random_seed = None
 
         # self.freq_value = 8.0333e9
+        self.kappa_m_to_s  = 1e11 # material difference parameters =  j \omega (\sigma_1 - \sigma_0) - \omega^2 (\epsilon_1 - \epsilon_0).
+        self.jj_area_m2 = 1e-14 # from pg 24, https://web.physics.ucsb.edu/~martinisgroup/classnotes/finland/LesHouchesJunctionPhysics.pdf
         self.freq_value = 8e9
         self.param_perturbation = np.array([1e-5])          # in mm
         self.fwd_source_strength = 1e-2
@@ -61,6 +63,7 @@ class AdjointEvaluator:
 
         self.num_adj_sample_points = 20
         self.source_vertical_displacement = 100e-6 # sources can't be at the surface exactly.
+        self.measurement_vertical_displacement = 1e-6
         
         self.fwd_source_locations = np.array([[300e-6, 300e-6, self.source_vertical_displacement], [-200e-6, 400e-6, self.source_vertical_displacement]])  # in meters
         self.current_adjoint_sources = [
@@ -75,6 +78,8 @@ class AdjointEvaluator:
               # in meters
         self.adjoint_rotation = math.pi/2 
         self.param_to_sim_scale = 1e-3
+
+        self.sample_strategy = "random" # "uniform"  
 
         self.parametric_designer = parametric_designer
         if config is not None:
@@ -235,7 +240,10 @@ class AdjointEvaluator:
         Args:
             normalization_area: Optional area for loss scaling (e.g., MA or SA surface area)
         """
+        am_grad_vec = np.zeros_like(params)
+        reynolds_grad_vec = np.zeros_like(params)
         grad_vec = np.zeros_like(params)
+        
 
         # --- Gradient Calculation ---
         # TODO: Can be made vastly more efficient by computing the adjoint and E field inner product as a scalar field,
@@ -245,28 +253,72 @@ class AdjointEvaluator:
 
         #  Part 1 - Adjoint method
         # \int_{\partial \Omega} \textit{some constants} \quad u(s) \mathbf{v}^\dagger \mathbf{E}\quad ds 
+
+        # ---- New code ----
+        # goal is to compute the inner product simply.
+        # 
+        
+         # ---- New code ----
+        # goal is to compute the inner product simply.
+        # TODO: Make more efficient, extract fields first.
         for basis_index in range(params.shape[0]):
             perturbation_vec = np.zeros_like(params)
             perturbation_vec[basis_index] = perturbation_magnitude
             
-            #TODO: Compute multiple inner products at once for efficiency.
-            inner_product = self.compute_boundary_inner_product(
-                params, perturbation_vec, fwd_sparams, adj_sparams
-            )
-            
-            grad_complex = -inner_product
-            grad = 2.0 * np.real(grad_complex)
-            grad_vec[basis_index] = grad
-
-        # Part 2 - Reynolds Transport Component
-        # \int_{\partial \Omega} u(s) \mathbf{E_z}^\dagger \mathbf{E_z}\quad ds
-        for basis_index in range(params.shape[0]):
-            perturbation_vec = np.zeros_like(params)
-            perturbation_vec[basis_index] = perturbation_magnitude
-
             boundary_velocity_field, reference_coord, _, ds = self.parametric_designer.compute_boundary_velocity(params, perturbation_vec)
 
+            # Inline the adjoint-forward product calculation
+            running_sum = 0
+            r3 = self.measurement_vertical_displacement
+            
+            flat_boundary_velocity_field = [
+                v for poly_vels in boundary_velocity_field
+                for ring_vels in poly_vels
+                for v in ring_vels
+            ]
+            flat_reference_coord = [
+                xy for poly_refs in reference_coord
+                for ring_refs in poly_refs
+                for xy in ring_refs
+            ]
+            
+            phase = np.exp(1j * float(self.adjoint_rotation))
+            
+            if self.print_timing: start_inner_time = time.time()
+
+            boundary_points = np.array([[r1, r2, r3] for (r1, r2) in flat_reference_coord])
+
+
+            boundary_points = np.asarray([[r1, r2, r3] for (r1, r2) in flat_reference_coord], float)
+            v = np.asarray(flat_boundary_velocity_field, float)
+
+            local_fwd_vecs      = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', boundary_points)  
+            local_adj_conj_vecs = self.sim_runner.eval_field_at_pts(adj_sparams, 'E', boundary_points)  # Already conjugated.
+            
+            # apply the adjoint rotation phase (scalar) to every row
+            local_adj_conj_vecs *= np.exp(1j * self.adjoint_rotation)
+
+            # pointwise inner products:
+            ip = np.einsum('ij,ij->i', local_adj_conj_vecs, local_fwd_vecs) 
+            scaled_ip = np.sum(v * ip * ds)
+
+            if self.print_timing: end_inner_time = time.time(); print(f"inner product loop time : {end_inner_time - start_inner_time:.6f}")
         
+            grad_complex = scaled_ip
+            adjoint_grad = -2.0 * np.real(grad_complex)
+            am_grad_vec[basis_index] = adjoint_grad
+
+            # Part 2 - Reynolds Transport Component
+            # \int_{\partial \Omega} u(s) \mathbf{E_z}^\dagger \mathbf{E_z}\quad ds
+            Ez_vecs = local_fwd_vecs[:, 2]  # Extract Ez component
+            Ez_dagger = np.conj(Ez_vecs)
+            Ez_mag_sq = np.abs(Ez_vecs)**2  # |E_z|² at EACH point (array)
+            reynolds_term = np.sum(v * Ez_mag_sq * ds) 
+
+            reynolds_grad_vec[basis_index] = reynolds_term
+
+        grad_vec = self.kappa_m_to_s*am_grad_vec + reynolds_grad_vec
+
 
         # --- Loss Calculation ---
         
@@ -278,12 +330,14 @@ class AdjointEvaluator:
         
         return grad_vec, loss
     
-    def compute_loss(self, params, fwd_sparams=None):
+    def compute_loss(self, params, fwd_sparams=None, objective_type="jj"):
         """Compute only the loss at given params."""
         qk_design = self.parametric_designer.build_qk_design(params)
         
+        
         if fwd_sparams is None:
             fwd_sparams = self._fwd_calculation(qk_design)
+            print("Warning: Forward simulation run inside compute_loss. Consider passing precomputed fwd_sparams for efficiency.")
         
         # Compute loss
         locations = np.array([src.location for src in self.current_adjoint_sources])
@@ -291,81 +345,17 @@ class AdjointEvaluator:
         E_at_targets = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', locations)
         E_projected = np.sum(E_at_targets * directions, axis=-1)
         
-        loss = -np.sum(np.abs(E_projected)**2)
+        loss = -np.sum(np.abs(E_projected)**2)/len(locations)
+
+        # Scale Objective, if needed.
+        # as we sample a constant number of points, the distance between them scales with area.
+        if objective_type == "sa":
+            area = self._get_silicon_area(params)
+            loss = loss * area 
+        if objective_type == "ma":
+            area = self._get_metal_area(params)
         
         return loss
-    
-   
-
-
-    def _calc_adjoint_forward_product(self, 
-                                      boundary_velocity_field,
-                                      reference_coord,
-                                      fwd_sparams: COMSOL_Simulation_RFsParameters, 
-                                      adj_sparams: COMSOL_Simulation_RFsParameters,
-                                      adjoint_rotation: float = 0):
-        
-
-        dr = 5e-6 # m
-         #TODO: extract this from the boundary field intelligently, or pass it from/to parametric designer -> polygon constructor
-
-        running_sum = 0
-
-        #TODO: Enforce non-2D
-        r3 = 1e-6
-
-        #TODO: Vectorise this entire process and inner product for efficiency.
-
-        flat_boundary_velocity_field = [
-                                        v for poly_vels in boundary_velocity_field
-                                        for ring_vels in poly_vels
-                                        for v in ring_vels
-                                        ]
-        flat_reference_coord =          [
-                                    xy for poly_refs in reference_coord
-                                    for ring_refs in poly_refs
-                                    for xy in ring_refs
-                                        ]
-        
-
-        phase = np.exp(1j * float(adjoint_rotation))
-
-        if self.print_timing: start_inner_time = time.time()
-        for v, (r1, r2) in zip(flat_boundary_velocity_field, flat_reference_coord):
-            # complete the forward and adjoint vectors. Note that the adjoint vector is actually the complex conjugate (but not the transpose) of the expected adjoint vector.
-
-            local_fwd_vec =         self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', [[r1, r2, r3]])
-            local_adj_vec_conj =    self.sim_runner.eval_field_at_pts(adj_sparams, 'E', [[r1, r2, r3]])  # extract E value of fwd_sparams at r1, r2
-            
-            local_adj_vec_conj = local_adj_vec_conj * phase
-
-            # Taking the inner product. Note the vectors are intially in row form. 
-            running_sum += v*(local_adj_vec_conj@local_fwd_vec.T)*dr
-
-        if self.print_timing: end_inner_time = time.time(); print(f"inner product loop time : {end_inner_time - start_inner_time:.6f}")
-        return running_sum 
-
-    def compute_boundary_inner_product(self, params, perturbation, fwd_sparams, adj_sparams):
-        """
-        Compute the boundary velocity inner product between forward and adjoint fields.
-        
-        Args:
-            params: Current parameter values
-            perturbation: Perturbation for boundary velocity calculation
-            fwd_sparams: Forward simulation results
-            adj_sparams: Adjoint simulation results
-            
-        Returns:
-            Complex-valued inner product
-        """
-        boundary_velocity_field, reference_coord, _, ds = \
-            self.parametric_designer.compute_boundary_velocity(params, perturbation)
-        
-        return self._calc_adjoint_forward_product(
-            boundary_velocity_field, reference_coord, 
-            fwd_sparams, adj_sparams, 
-            adjoint_rotation=self.adjoint_rotation
-        )
     
     def _get_objective_info(self, params, objective_type):
         """Returns (sources, normalization_area) for the objective"""

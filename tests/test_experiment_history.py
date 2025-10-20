@@ -14,8 +14,8 @@ def test_experiment_saves_results(tmp_path):
     
     # Mock some results
     results = [
-        {"loss": 1.5, "grad": np.array([0.1, 0.2])},
-        {"loss": 1.3, "grad": np.array([0.05, 0.15])}
+        {"loss": 1337, "grad": np.array([0.1, 0.2])},
+        {"loss": 1337, "grad": np.array([0.05, 0.15])}
     ]
     
     exp.save_results(results, "test.jsonl")
@@ -41,19 +41,3 @@ def test_experiment_saves_config(tmp_path):
     assert loaded["freq_value"] == 8e9
     assert loaded["lr"] == 0.01
 
-def test_optimiser_returns_results():
-    # You'll need to mock or use a real evaluator here
-    # Simplified example assuming you have a mock evaluator
-    
-    initial_params = np.array([0.2, 0.3])
-    lr = 0.01
-    # evaluator = MockEvaluator()  # You'd create this
-    # opt = Optimiser(initial_params, lr, evaluator)
-    
-    # results = opt.gradient_descent(num_steps=5)
-    
-    # assert len(results) == 5
-    # assert "loss" in results[0]
-    # assert "grad" in results[0]
-    # assert "params" in results[0]
-    pass  # Remove once you have a mock evaluator
