@@ -41,6 +41,9 @@ class Optimiser:
         Generator for multi-objective sweep.
         Yields results one at a time 
         """
+        if verbose:
+            print(f"\n{'-'*10} Starting multi-objective sweep over {len(param_range)} with w_jj={w_jj} {'-'*10}\n")
+
         if perturbation_mag is None:
             perturbation_mag = self.evaluator.param_perturbation[0]
         

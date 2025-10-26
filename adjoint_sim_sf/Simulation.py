@@ -40,6 +40,20 @@ class SimulationRunner:
     def eval_fields_over_mesh(self, sParams: COMSOL_Simulation_RFsParameters):
         """Evaluate all fields over the simulation mesh."""
         return sParams.eval_fields_over_mesh()
+    
+    def eval_fields_at_surface(self, sParams: COMSOL_Simulation_RFsParameters):
+        """
+        Evaluate the exact surface integrals. Does error checking in case this API changes.
+        """
+        result = sParams.get_interface_real_square_surface_integrals('Ez')
+
+
+        assert result is not None, "Failed to evaluate fields at surface."
+        assert 'intMetals' in result, "Expected 'intMetals' in surface integral results."
+        assert 'intDielectric' in result, "Expected 'intDielectric' in surface integral results."
+        assert len(result.keys()) == 2, "Expected only 'intMetals' and 'intDielectric' in results."
+
+        return result
 
     def save(self):
         if not self.latest_cmsl:

@@ -1,3 +1,5 @@
+#Experiment.py
+
 import os
 import json
 from datetime import datetime
@@ -15,6 +17,8 @@ class Experiment:
         self.base_dir = base_dir
         self.exp_dir = os.path.join(base_dir, name)
         os.makedirs(self.exp_dir, exist_ok=True)
+
+        print(f"Experiment directory created at: {self.exp_dir}\n")
         
     
     def path(self, filename: str) -> str:

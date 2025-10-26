@@ -37,6 +37,7 @@ from .Sources import Source
 """
 @TODO: Naming confusion. "design" in this code refers to both the qiskit design and to an instance of ParametricDesign class.
 @TODO: Account for changes in loss directly due to design parameters.
+@TODO: Add integral option using sim_runn.eval_fields_at_surface(sim_sParams)
 """    
 
 class AdjointEvaluator:
@@ -47,9 +48,10 @@ class AdjointEvaluator:
                 "Call COMSOL_Model.init_engine() before running simulations."
             )
         
-        # debugging states
-        self.verbose = True
-        self.print_timing = False
+        # --- debugging states
+        self.verbose                        = True
+        self.debug_interface_epr            = True # Performs an exact surface evaluation during evaluate.
+        self.debug_timing                   = True
         
         self.random_seed = None
 
@@ -63,7 +65,7 @@ class AdjointEvaluator:
 
         self.num_adj_sample_points = 20
         self.source_vertical_displacement = 100e-6 # sources can't be at the surface exactly.
-        self.measurement_vertical_displacement = 1e-6
+        self.measurement_vertical_displacement = 100e-6
         
         self.fwd_source_locations = np.array([[300e-6, 300e-6, self.source_vertical_displacement], [-200e-6, 400e-6, self.source_vertical_displacement]])  # in meters
         self.current_adjoint_sources = [
@@ -96,7 +98,7 @@ class AdjointEvaluator:
         res = self.sim_runner.run_forward(design, sources)
         endtime = time.time()
 
-        if self.print_timing: print(f"forward sim time : {endtime - starttime:.6f}")
+        if self.debug_timing: print(f"forward sim time : {endtime - starttime:.6f}")
 
         return res
 
@@ -112,7 +114,7 @@ class AdjointEvaluator:
         starttime = time.time()
         res = self.sim_runner.run_adjoint(design, sources)
         endtime = time.time()
-        if self.print_timing:  print(f"adjoint sim time : {endtime - starttime:.6f}")
+        if self.debug_timing:  print(f"adjoint sim time : {endtime - starttime:.6f}")
         
         return self.sim_runner.run_adjoint(design, sources)
     
@@ -152,9 +154,7 @@ class AdjointEvaluator:
         qk_design = self.parametric_designer.build_qk_design(params)
         
         if fwd_sparams is None:
-            
             fwd_sparams = self._fwd_calculation(qk_design)
-            
             
         if adj_sparams is None:
             adj_sparams = self._adjoint_calculation(qk_design, fwd_sparams)
@@ -168,16 +168,16 @@ class AdjointEvaluator:
         
         endtime = time.time()
 
-        if self.print_timing:  print(f"inner product time : {endtime - starttime:.6f}")     
+        if self.debug_timing:  print(f"inner product time : {endtime - starttime:.6f}")     
         if verbose:
             print(f"{objective_type}: {len(sources)} sources, loss={loss:.3e}")
         
         return grad_vec, loss
     
     def evaluate_multi_objective(self, params, perturbation_magnitude, 
-                                w_jj=0.5, 
-                                w_sa=0.5, 
-                                w_ma=0.0,
+                                w_jj=0.34, 
+                                w_sa=0.33, 
+                                w_ma=0.33,
                                 verbose = True):
         # Run forward sim once
         qk_design = self.parametric_designer.build_qk_design(params)
@@ -221,8 +221,19 @@ class AdjointEvaluator:
             "grad_ma": grad_ma
         }
 
+        if self.debug_interface_epr:
+            starttime = time.time()
+            # Debugging: Exact surface evaluation
+            interface_epr = self.sim_runner.eval_fields_at_surface(fwd_sparams)
+            endtime = time.time()
+            if self.debug_timing: 
+                print(f"surface integral eval time : {endtime - starttime:.6f}")
+            # Merge dictionaries.
+            current_results = current_results | interface_epr
+        
         
         return current_results
+
     
     def _compute_loss_and_gradient(self, params, perturbation_magnitude, 
                                adjoint_sources, fwd_sparams, adj_sparams,
@@ -246,21 +257,10 @@ class AdjointEvaluator:
         
 
         # --- Gradient Calculation ---
-        # TODO: Can be made vastly more efficient by computing the adjoint and E field inner product as a scalar field,
-        #       then integrating over the boundary with the velocity field. 
-        #       Likewise, computing the |E_z|^2 field as a scalar field also.
-
 
         #  Part 1 - Adjoint method
         # \int_{\partial \Omega} \textit{some constants} \quad u(s) \mathbf{v}^\dagger \mathbf{E}\quad ds 
 
-        # ---- New code ----
-        # goal is to compute the inner product simply.
-        # 
-        
-         # ---- New code ----
-        # goal is to compute the inner product simply.
-        # TODO: Make more efficient, extract fields first.
         for basis_index in range(params.shape[0]):
             perturbation_vec = np.zeros_like(params)
             perturbation_vec[basis_index] = perturbation_magnitude
@@ -284,7 +284,7 @@ class AdjointEvaluator:
             
             phase = np.exp(1j * float(self.adjoint_rotation))
             
-            if self.print_timing: start_inner_time = time.time()
+            if self.debug_timing: start_inner_time = time.time()
 
             boundary_points = np.array([[r1, r2, r3] for (r1, r2) in flat_reference_coord])
 
@@ -302,7 +302,7 @@ class AdjointEvaluator:
             ip = np.einsum('ij,ij->i', local_adj_conj_vecs, local_fwd_vecs) 
             scaled_ip = np.sum(v * ip * ds)
 
-            if self.print_timing: end_inner_time = time.time(); print(f"inner product loop time : {end_inner_time - start_inner_time:.6f}")
+            if self.debug_timing: end_inner_time = time.time(); print(f"inner product loop time : {end_inner_time - start_inner_time:.6f}")
         
             grad_complex = scaled_ip
             adjoint_grad = -2.0 * np.real(grad_complex)
@@ -351,7 +351,6 @@ class AdjointEvaluator:
         # as we sample a constant number of points, the distance between them scales with area.
         if objective_type == "sa":
             area = self._get_silicon_area(params)
-            loss = loss * area 
         if objective_type == "ma":
             area = self._get_metal_area(params)
         
@@ -367,12 +366,12 @@ class AdjointEvaluator:
             
             case "sa":
                 sources = self.get_epr_adjoint_sources(params, self.num_adj_sample_points, 
-                                                    interface="SA", seed=self.random_seed)
+                                                    interface="sa", seed=self.random_seed)
                 area = self._get_silicon_area(params)
             
             case "ma":
                 sources = self.get_epr_adjoint_sources(params, self.num_adj_sample_points,
-                                                    interface="MA", seed=self.random_seed)
+                                                    interface="ma", seed=self.random_seed)
                 area = self._get_metal_area(params)
             
             case "manual":
@@ -387,15 +386,42 @@ class AdjointEvaluator:
     def save(self):
         self.sim_runner.save()
 
+    
+    def get_epr_adjoint_sources(self, params, n, interface = "sa", seed=None):
+        """
+        Returns a random sample of points above the design region without strengths
+        """
+        iface = interface.lower()
+        assert iface in {"ma", "sa"}, f"Invalid interface '{iface}'" 
+        
+        vertical_displacement = 1e-6
+        orientation = np.array([0,0,1])
+
+        #TODO: Rework self.sample_strategy to be a bool already.
+        if iface == "ma":
+            points_2d = self.parametric_designer.sample_MA_points(params, n, seed=seed, random=(self.sample_strategy=="random"))
+        if iface == "sa":
+            points_2d = self.parametric_designer.sample_SA_points(params, n, seed=seed, random=(self.sample_strategy=="random"))
+            
+        sources = [Source(np.array([pt[0], pt[1], vertical_displacement]), orientation) for pt in points_2d]
+
+        return sources
+
+    def get_eval_field_at_surface(self, sParams):
+        """
+        Wrapper method to get Comsol evaluated fields at surface.
+        """
+        return self.sim_runner.eval_fields_at_surface(sParams)
+
+    def get_JJ_adjoint_sources(self):
+        return self.canonical_jj_adjoint_source
+    
     def _calc_Ap(self, current_param, fwd_field_data, perturbation):
         """
         WIP: In the future will facilitate non-boundary velocity methods
         """
         raise NotImplementedError
     
-    
-
-
     def visualise(self, sims_params):
         field_data = self.sim_runner.eval_fields_over_mesh(sims_params)
         import matplotlib.pyplot as plt
@@ -405,27 +431,6 @@ class AdjointEvaluator:
         plane_inds = (np.abs(z)<1e-6)
         plt.scatter(x[plane_inds], y[plane_inds], c=np.clip(np.abs(Ez[plane_inds]), 0,1e14))
 
-    def get_JJ_adjoint_sources(self):
-        return self.canonical_jj_adjoint_source
-    
-    def get_epr_adjoint_sources(self, params, n, interface = "SA", seed=None):
-        """
-        Returns a random sample of points above the design region without strengths
-        """
-        iface = interface.upper()
-        assert iface in {"MA", "SA"}, f"Invalid interface '{iface}'" 
-        
-        vertical_displacement = 1e-6
-        orientation = np.array([0,0,1])
-        if iface == "MA":
-            points_2d = self.parametric_designer.sample_MA_points(params, n, seed=seed)
-        if iface == "SA":
-            points_2d = self.parametric_designer.sample_SA_points(params, n, seed=seed)
-            
-        sources = [Source(np.array([pt[0], pt[1], vertical_displacement]), orientation) for pt in points_2d]
-
-        return sources
-    
     # -----
     # Utilities: 
     #   - 1. geometry

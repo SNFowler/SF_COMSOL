@@ -47,11 +47,11 @@ class ParametricDesign(ABC):
         pass
 
     @abstractmethod
-    def sample_MA_points(self, params: np.ndarray, n: int, seed=None):
+    def sample_MA_points(self, params: np.ndarray, n: int, seed=None, random = True):
         pass
 
     @abstractmethod
-    def sample_SA_points(self, params: np.ndarray, n: int, seed=None):
+    def sample_SA_points(self, params: np.ndarray, n: int, seed=None, random = True):
         pass
 
     @abstractmethod
@@ -142,17 +142,17 @@ class SymmetricTransmonDesign(ParametricDesign):
         return vels, refs_m, near_m, ds_m
 
         
-    def sample_MA_points(self, params: np.ndarray, n: int, seed=None):
+    def sample_MA_points(self, params: np.ndarray, n: int, seed=None, random = True):
         """Sample n points from interior of design geometry."""            
-        pts_mm = self._polygon_constructor.sample_interior_points(params, n, seed)
+        pts_mm = self._polygon_constructor.sample_interior_points(params, n, seed, random=random)
         return pts_mm * self.M_PER_MM
     
-    def sample_SA_points(self, params: np.ndarray, n: int, seed=None):
+    def sample_SA_points(self, params: np.ndarray, n: int, seed=None, random = True):
         """ 
         Sample n points that aren't in the interior of the design geometry.
         (Does sample from within holes)
         """
-        pts_mm = self._polygon_constructor.sample_noninterior_points(params, n, seed)
+        pts_mm = self._polygon_constructor.sample_noninterior_points(params, n, seed, random=random)
         return pts_mm * self.M_PER_MM  
     
     def get_interior_area(self, params: np.ndarray):
@@ -287,7 +287,7 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         return velocities, reference_coords, nearest_perturbed_coords, ds
 
     
-    def sample_interior_points(self, params: np.ndarray, n: int, seed=None) -> np.ndarray:
+    def sample_interior_points(self, params: np.ndarray, n: int, seed=None, random=True) -> np.ndarray:
         """
         Sample n points uniformly from the interior of the design.
         Returns array of shape (n, 2).
@@ -296,13 +296,16 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         
         # Get bounding box
         minx, miny, maxx, maxy = multipoly.bounds
+
+        if random == False:
+            raise NotImplementedError("Non-random sampling not yet implemented for MA points.")
         
         # Sample with rejection
         points = []
         if not seed:
             seed = time.time_ns()
         rng = np.random.default_rng(seed)
-        
+
         while len(points) < n:
             x = rng.uniform(minx, maxx)
             y = rng.uniform(miny, maxy)
@@ -319,7 +322,7 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
 
         return multipoly.area
     
-    def sample_noninterior_points(self, params: np.ndarray, n: int, seed=None) -> np.ndarray:
+    def sample_noninterior_points(self, params: np.ndarray, n: int, seed=None, random=True) -> np.ndarray:
         """
         Uniformly sample n points from the complement of the design within the bounding box.
         (Includes polygon holes automatically since .contains() is False there.)
@@ -332,6 +335,9 @@ class SymmetricTransmonPolygonConstructor(PolygonConstructor):
         if not seed:
             seed = time.time_ns()
         rng = np.random.default_rng(seed)
+
+        if random == False:
+            raise NotImplementedError("Non-random sampling not yet implemented for SA points.")
 
         # Rejection sampling: uniform over bbox, accept if not in interior
         while len(points) < n:
