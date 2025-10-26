@@ -322,7 +322,7 @@ class AdjointEvaluator:
 
         # --- Loss Calculation ---
         
-        loss = self.compute_loss(params, fwd_sparams)
+        loss = self.compute_loss(params, adjoint_sources, fwd_sparams)
         
         # Multiply by area
         if integral_area is not None:
@@ -330,7 +330,7 @@ class AdjointEvaluator:
         
         return grad_vec, loss
     
-    def compute_loss(self, params, fwd_sparams=None, objective_type="jj"):
+    def compute_loss(self, params, current_adjoint_sources, fwd_sparams=None, objective_type="jj"):
         """Compute only the loss at given params."""
         qk_design = self.parametric_designer.build_qk_design(params)
         
@@ -340,8 +340,8 @@ class AdjointEvaluator:
             print("Warning: Forward simulation run inside compute_loss. Consider passing precomputed fwd_sparams for efficiency.")
         
         # Compute loss
-        locations = np.array([src.location for src in self.current_adjoint_sources])
-        directions = np.array([src.direction for src in self.current_adjoint_sources])
+        locations = np.array([src.location for src in current_adjoint_sources])
+        directions = np.array([src.direction for src in current_adjoint_sources])
         E_at_targets = self.sim_runner.eval_field_at_pts(fwd_sparams, 'E', locations)
         E_projected = np.sum(E_at_targets * directions, axis=-1)
         
